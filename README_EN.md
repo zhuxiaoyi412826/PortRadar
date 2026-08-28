@@ -16,7 +16,7 @@ A lightweight Windows port occupancy checker. Enter a port number to instantly s
 ```text
     +-------------------------------------------------------+
     |                                                       |
-    |    PortLens v0.1.0 - Port Occupancy Checker           |
+    |    PortLens v0.3.0 - Port Occupancy Checker           |
     |                                                       |
     +-------------------------------------------------------+
 

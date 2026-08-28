@@ -13,7 +13,7 @@
 #include "process_manager.h"
 
 // 版本号（同步更新 version.rc）
-#define PORTLENS_VERSION "0.2.0"
+#define PORTLENS_VERSION "0.3.0"
 
 // ========== 输入工具函数（全部用 _getch，避免 cin 缓冲问题） ==========
 
