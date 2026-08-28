@@ -39,17 +39,30 @@ A lightweight Windows port occupancy checker. Enter a port number to instantly s
 **Command-line mode** (run with arguments, exits after execution — script friendly):
 
 ```text
-> port_checker.exe -c 5000
+> port -c 5000
 Port 5000:
   [TCP] OCCUPIED  node.exe (PID: 21624)
         Path:     D:\software\node\node-v24.16.0-win-x64\node.exe
   [UDP] FREE
 
-> port_checker.exe -a 5000
+> port -a 5000
 Available port: 5001 (2nd port starting from 5000)
 ```
 
 > Note: the program UI is in Chinese; the examples above are translated for illustration.
+
+## Installing the `port` command
+
+**Just double-click the exe once**: on first launch it automatically adds its own folder to the user PATH (no administrator rights required). Open a new CMD window afterwards, and `port` works from any directory.
+
+Manual management is also available:
+
+```bat
+port --install-path      :: add to user PATH
+port --uninstall-path    :: remove from user PATH
+```
+
+Notes: already-open CMD windows won't see the change — open a new one; only the current user's PATH is modified, leaving the system and other accounts untouched.
 
 ## Features
 
@@ -67,7 +80,7 @@ Available port: 5001 (2nd port starting from 5000)
 
 ## Download
 
-- Grab `port_checker.exe` from the [Releases](../../releases) page — runs on Windows 7+ with no runtime dependencies
+- Grab `port.exe` from the [Releases](../../releases) page — runs on Windows 7+ with no runtime dependencies; double-clicking once also installs the `port` command (see "Installing the `port` command" above)
 - Or build from source (see below)
 
 ## Usage
@@ -81,6 +94,8 @@ Available port: 5001 (2nd port starting from 5000)
 | `-f <name>` | Find ports by process name (partial match, case-insensitive) |
 | `-s <start> <end>` | Scan a port range |
 | `-a <port>` | Auto-find an available port starting from the given one |
+| `--install-path` | Add the program folder to the user PATH (the `port` command) |
+| `--uninstall-path` | Remove the program folder from the user PATH |
 | `-v, --version` | Show version |
 | `-h, --help` | Show help |
 
@@ -88,16 +103,16 @@ Exit codes (script friendly): `0` = port free / success, `1` = port occupied / n
 
 ```bat
 :: Who is using port 3306?
-port_checker.exe -c 3306
+port -c 3306
 
 :: Find a free port starting from 8000
-port_checker.exe -a 8000
+port -a 8000
 
 :: Which ports does node hold?
-port_checker.exe -f node
+port -f node
 
 :: Scan 1-1000 and save the result
-port_checker.exe -s 1 1000 > scan_result.txt
+port -s 1 1000 > scan_result.txt
 ```
 
 ### Interactive mode
@@ -129,7 +144,7 @@ Double-click `build.bat`. The script locates g++ on PATH, or falls back to the `
 windres version.rc -O coff -o version.res
 g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ \
     main.cpp port_checker.cpp process_manager.cpp version.res \
-    -o port_checker.exe \
+    -o port.exe \
     -lws2_32 -liphlpapi -lpsapi -lversion -lshell32 -mconsole
 ```
 
@@ -141,7 +156,7 @@ The `-static` flags produce a single self-contained exe that runs on any Windows
 .\tests\run_tests.ps1
 ```
 
-The smoke suite covers version output, every CLI option, and the exit-code contract (11 assertions). CI runs the same build and tests on every push / PR; pushing a `v*` tag automatically builds and attaches the exe to a GitHub Release.
+The smoke suite covers version output, every CLI option, PATH install/uninstall, and the exit-code contract (16 assertions). CI runs the same build and tests on every push / PR; pushing a `v*` tag automatically builds and attaches the exe to a GitHub Release.
 
 ## Project Layout
 

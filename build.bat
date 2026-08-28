@@ -39,9 +39,9 @@ if %errorlevel% neq 0 (
 echo [INFO] Compiling (static link)...
 echo.
 
-if exist port_checker.exe del /q port_checker.exe
+if exist port.exe del /q port.exe
 
-g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ main.cpp port_checker.cpp process_manager.cpp version.res -o port_checker.exe -lws2_32 -liphlpapi -lpsapi -lversion -lshell32 -mconsole
+g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ main.cpp port_checker.cpp process_manager.cpp version.res -o port.exe -lws2_32 -liphlpapi -lpsapi -lversion -lshell32 -mconsole
 
 if %errorlevel% neq 0 (
     echo.
@@ -56,7 +56,7 @@ echo   Build successful!
 echo ================================================
 echo.
 
-for %%f in (port_checker.exe) do (
+for %%f in (port.exe) do (
     echo   File: %%~nf%%~xf
     echo   Size: %%~zf bytes
 )
@@ -66,4 +66,4 @@ echo   Press any key to run...
 pause >nul
 echo.
 
-port_checker.exe
+port.exe

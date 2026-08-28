@@ -40,15 +40,28 @@
 **命令行模式**（带参数启动，执行完退出，可写脚本）：
 
 ```text
-> port_checker.exe -c 5000
+> port -c 5000
 端口 5000:
   [TCP] 被占用  node.exe (PID: 21624)
         路径:   D:\software\node\node-v24.16.0-win-x64\node.exe
   [UDP] 空闲
 
-> port_checker.exe -a 5000
+> port -a 5000
 可用端口: 5001 (从 5000 起第 2 个)
 ```
+
+## 安装 port 命令
+
+**双击运行一次 exe 即可**：首次启动会自动把程序所在目录加入用户 PATH（无需管理员权限），之后新开一个 CMD 窗口，在任意目录输入 `port` 就能使用。
+
+也可手动管理：
+
+```bat
+port --install-path      :: 加入用户 PATH
+port --uninstall-path    :: 从用户 PATH 移除
+```
+
+说明：已打开的 CMD 窗口不会感知变化，请新开窗口验证；修改的是当前用户的 PATH，不影响系统和其他账户。
 
 ## 功能特性
 
@@ -66,7 +79,7 @@
 
 ## 下载安装
 
-- 从 [Releases](../../releases) 页面下载 `port_checker.exe`，双击即可运行（Windows 7 及以上，无需安装任何运行库）
+- 从 [Releases](../../releases) 页面下载 `port.exe`，双击即可运行（Windows 7 及以上，无需安装任何运行库）；双击一次即自动安装 `port` 命令，详见上文"安装 port 命令"
 - 或自行编译，见下文
 
 ## 使用说明
@@ -80,6 +93,8 @@
 | `-f <进程名>` | 按进程名反查端口（部分匹配，不区分大小写） |
 | `-s <起> <止>` | 扫描端口范围 |
 | `-a <端口>` | 从指定端口开始自动找可用端口 |
+| `--install-path` | 将程序目录加入用户 PATH（`port` 命令） |
+| `--uninstall-path` | 从用户 PATH 移除程序目录 |
 | `-v, --version` | 显示版本 |
 | `-h, --help` | 显示帮助 |
 
@@ -87,16 +102,16 @@
 
 ```bat
 :: 检测端口被谁占用
-port_checker.exe -c 3306
+port -c 3306
 
 :: 找一个 8000 起步的可用端口，直接用于启动参数
-port_checker.exe -a 8000
+port -a 8000
 
 :: 查看哪些端口被 node 占用
-port_checker.exe -f node
+port -f node
 
 :: 扫描 1-1000 并导出结果
-port_checker.exe -s 1 1000 > scan_result.txt
+port -s 1 1000 > scan_result.txt
 ```
 
 ### 交互式模式
@@ -134,7 +149,7 @@ build.bat
 windres version.rc -O coff -o version.res
 g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ \
     main.cpp port_checker.cpp process_manager.cpp version.res \
-    -o port_checker.exe \
+    -o port.exe \
     -lws2_32 -liphlpapi -lpsapi -lversion -lshell32 -mconsole
 ```
 
@@ -146,7 +161,7 @@ g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ \
 .\tests\run_tests.ps1
 ```
 
-冒烟测试覆盖版本输出、各命令行参数、退出码约定（11 项断言）。CI 会在每次 push / PR 时自动执行构建与测试；推送 `v*` 标签会自动编译并把 exe 发布到 Release。
+冒烟测试覆盖版本输出、各命令行参数、PATH 安装/卸载、退出码约定（16 项断言）。CI 会在每次 push / PR 时自动执行构建与测试；推送 `v*` 标签会自动编译并把 exe 发布到 Release。
 
 ## 项目结构
 

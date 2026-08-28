@@ -29,7 +29,7 @@ jobs:
           windres version.rc -O coff -o version.res
           g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ \
               main.cpp port_checker.cpp process_manager.cpp version.res \
-              -o port_checker.exe \
+              -o port.exe \
               -lws2_32 -liphlpapi -lpsapi -lversion -lshell32 -mconsole
 
       - name: Smoke test
@@ -40,10 +40,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: PortLens-win64
-          path: port_checker.exe
+          path: port.exe
 
       - name: Upload to Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: port_checker.exe
+          files: port.exe

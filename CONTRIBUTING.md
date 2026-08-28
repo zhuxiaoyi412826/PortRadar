@@ -16,7 +16,7 @@
 windres version.rc -O coff -o version.res
 g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ \
     main.cpp port_checker.cpp process_manager.cpp version.res \
-    -o port_checker.exe \
+    -o port.exe \
     -lws2_32 -liphlpapi -lpsapi -lversion -lshell32 -mconsole
 ```
 

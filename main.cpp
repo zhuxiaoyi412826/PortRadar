@@ -3,6 +3,7 @@
 #include <vector>
 #include <algorithm>
 #include <cctype>
+#include <cwctype>
 #include <windows.h>
 #include <shellapi.h>
 #include <conio.h>
@@ -12,7 +13,7 @@
 #include "process_manager.h"
 
 // 版本号（同步更新 version.rc）
-#define PORTLENS_VERSION "0.1.0"
+#define PORTLENS_VERSION "0.2.0"
 
 // ========== 输入工具函数（全部用 _getch，避免 cin 缓冲问题） ==========
 
@@ -803,17 +804,169 @@ void findAvailablePortMenu() {
     printError("从 " + std::to_string(preferred) + " 起连续 " + std::to_string(maxTries) + " 个端口都被占用");
 }
 
+// ========== PATH 管理（port 命令支持） ==========
+
+// 获取 exe 所在目录（绝对路径）
+static std::wstring getExeDirW() {
+    wchar_t path[MAX_PATH];
+    DWORD n = GetModuleFileNameW(NULL, path, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return L"";
+    std::wstring p(path);
+    size_t pos = p.find_last_of(L"\\/");
+    return (pos == std::wstring::npos) ? L"" : p.substr(0, pos);
+}
+
+static std::wstring trimTrailingSlash(std::wstring s) {
+    while (!s.empty() && (s.back() == L'\\' || s.back() == L'/')) s.pop_back();
+    return s;
+}
+
+static bool equalsIgnoreCaseW(const std::wstring& a, const std::wstring& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); i++)
+        if (towlower(a[i]) != towlower(b[i])) return false;
+    return true;
+}
+
+static std::vector<std::wstring> splitPathEntries(const std::wstring& s) {
+    std::vector<std::wstring> out;
+    std::wstring cur;
+    for (wchar_t c : s) {
+        if (c == L';') {
+            if (!cur.empty()) out.push_back(cur);
+            cur.clear();
+        } else {
+            cur += c;
+        }
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
+// 读取用户 Path 原始值（保留变量形式）；不存在返回 false
+static bool readUserPathRaw(std::wstring& raw, DWORD& type) {
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+        return false;
+
+    DWORD size = 0;
+    if (RegQueryValueExW(hKey, L"Path", NULL, &type, NULL, &size) != ERROR_SUCCESS || size == 0) {
+        RegCloseKey(hKey);
+        return false;
+    }
+
+    std::vector<wchar_t> buf(size / sizeof(wchar_t) + 1);
+    if (RegQueryValueExW(hKey, L"Path", NULL, &type, (LPBYTE)buf.data(), &size) != ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+        return false;
+    }
+    RegCloseKey(hKey);
+    raw.assign(buf.data());
+    return true;
+}
+
+// 通知系统环境变量已变化（新开的 CMD 立即可用，无需注销）
+static void broadcastEnvChange() {
+    SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
+        (LPARAM)L"Environment", SMTO_ABORTIFHUNG, 5000, NULL);
+}
+
+// exe 目录是否已在用户 PATH 中（各项展开变量后比较）
+static bool isExeDirInPath() {
+    std::wstring exeDir = trimTrailingSlash(getExeDirW());
+    if (exeDir.empty()) return false;
+
+    std::wstring raw;
+    DWORD type;
+    if (!readUserPathRaw(raw, type)) return false;
+
+    for (const auto& entry : splitPathEntries(raw)) {
+        wchar_t expBuf[2048];
+        DWORD m = ExpandEnvironmentStringsW(entry.c_str(), expBuf, 2048);
+        std::wstring cmp = (m > 0 && m < 2048) ? std::wstring(expBuf) : entry;
+        if (equalsIgnoreCaseW(trimTrailingSlash(cmp), exeDir)) return true;
+    }
+    return false;
+}
+
+// 将 exe 目录加入用户 PATH（已存在则跳过）。写回时保留原有变量形式
+static bool installToPath() {
+    std::wstring exeDir = trimTrailingSlash(getExeDirW());
+    if (exeDir.empty()) return false;
+    if (isExeDirInPath()) return true;
+
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_READ | KEY_WRITE, &hKey) != ERROR_SUCCESS)
+        return false;
+
+    std::wstring raw;
+    DWORD type;
+    bool has = readUserPathRaw(raw, type);
+
+    std::wstring newVal = raw;
+    if (!newVal.empty() && newVal.back() != L';') newVal += L';';
+    newVal += exeDir;
+
+    bool ok = RegSetValueExW(hKey, L"Path", 0,
+        has ? type : REG_EXPAND_SZ,
+        (const BYTE*)newVal.c_str(),
+        (DWORD)((newVal.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
+    RegCloseKey(hKey);
+
+    if (ok) broadcastEnvChange();
+    return ok;
+}
+
+// 从用户 PATH 中移除 exe 目录
+static bool removeFromPath() {
+    std::wstring exeDir = trimTrailingSlash(getExeDirW());
+    if (exeDir.empty()) return false;
+
+    std::wstring raw;
+    DWORD type;
+    if (!readUserPathRaw(raw, type)) return false;
+
+    std::wstring result;
+    bool changed = false;
+    for (const auto& entry : splitPathEntries(raw)) {
+        wchar_t expBuf[2048];
+        DWORD m = ExpandEnvironmentStringsW(entry.c_str(), expBuf, 2048);
+        std::wstring cmp = (m > 0 && m < 2048) ? std::wstring(expBuf) : entry;
+        if (equalsIgnoreCaseW(trimTrailingSlash(cmp), exeDir)) {
+            changed = true;
+            continue;
+        }
+        if (!result.empty()) result += L';';
+        result += entry;
+    }
+    if (!changed) return false;
+
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_WRITE, &hKey) != ERROR_SUCCESS)
+        return false;
+
+    bool ok = RegSetValueExW(hKey, L"Path", 0, type,
+        (const BYTE*)result.c_str(),
+        (DWORD)((result.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
+    RegCloseKey(hKey);
+
+    if (ok) broadcastEnvChange();
+    return ok;
+}
+
 // ========== 命令行模式 ==========
 
 static void printCliHelp() {
     printf("PortLens v%s - Windows 端口占用检测工具\n\n", PORTLENS_VERSION);
-    printf("用法: port_checker.exe [选项]\n\n");
+    printf("用法: port [选项]  （已安装到 PATH 后任意目录可用）\n\n");
     printf("  （无参数）      启动交互式菜单\n");
     printf("  -c <端口>      检测单个端口 (TCP+UDP)\n");
     printf("  -l [协议]      列出所有监听端口 (tcp/udp/all, 默认 all)\n");
     printf("  -f <进程名>    按进程名反查端口 (部分匹配)\n");
     printf("  -s <起> <止>   扫描端口范围\n");
     printf("  -a <端口>      从指定端口开始自动找可用端口\n");
+    printf("  --install-path    将本程序目录加入用户 PATH (port 命令)\n");
+    printf("  --uninstall-path  从用户 PATH 移除本程序目录\n");
     printf("  -v, --version  显示版本\n");
     printf("  -h, --help     显示帮助\n\n");
     printf("退出码: 0=空闲/成功  1=被占用/无结果  2=参数或运行错误\n");
@@ -922,6 +1075,25 @@ static int runCli(int argc, char* argv[]) {
         return 0;
     }
 
+    if (cmd == "--install-path") {
+        if (installToPath()) {
+            printf("已将本程序目录加入用户 PATH\n");
+            printf("新开一个 CMD 窗口，输入 port 即可使用\n");
+            return 0;
+        }
+        printError("PATH 安装失败（注册表写入被拒绝）");
+        return 2;
+    }
+
+    if (cmd == "--uninstall-path") {
+        if (removeFromPath()) {
+            printf("已从用户 PATH 移除本程序目录\n");
+            return 0;
+        }
+        printError("PATH 中未找到本程序目录，无需移除");
+        return 2;
+    }
+
     if (cmd == "-c") {
         uint16_t port;
         if (!parsePort(argc > 2 ? argv[2] : NULL, port)) {
@@ -1002,6 +1174,15 @@ int main(int argc, char* argv[]) {
         int rc = runCli(argc, argv);
         PortChecker::cleanup();
         return rc;
+    }
+
+    // 双击启动（交互模式）: 首次运行自动把本目录加入 PATH，
+    // 之后在任意 CMD 输入 port 即可调用；已安装则静默跳过
+    if (!isExeDirInPath()) {
+        if (installToPath()) {
+            printSuccess("已安装 port 命令: 新开 CMD 窗口后，任意目录输入 port 即可使用");
+            printInfo("卸载: port --uninstall-path");
+        }
     }
 
     while (true) {

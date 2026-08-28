@@ -4,9 +4,9 @@
 #include <windows.h>
 
 #define VER_MAJOR 0
-#define VER_MINOR 1
+#define VER_MINOR 2
 #define VER_PATCH 0
-#define VER_STR "0.1.0"
+#define VER_STR "0.2.0"
 
 1 VERSIONINFO
 FILEVERSION VER_MAJOR,VER_MINOR,VER_PATCH,0
@@ -23,7 +23,7 @@ BEGIN
             VALUE "FileVersion", VER_STR
             VALUE "InternalName", "PortLens"
             VALUE "LegalCopyright", "Copyright (C) 2026 PortLens Project. MIT License."
-            VALUE "OriginalFilename", "port_checker.exe"
+            VALUE "OriginalFilename", "port.exe"
             VALUE "ProductName", "PortLens"
             VALUE "ProductVersion", VER_STR
         END
