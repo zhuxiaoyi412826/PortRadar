@@ -5,6 +5,7 @@
 *.dll
 *.lib
 *.a
+*.res
 
 # IDE / editor
 .vscode/

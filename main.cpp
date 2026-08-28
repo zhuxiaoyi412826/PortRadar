@@ -11,6 +11,9 @@
 #include "port_checker.h"
 #include "process_manager.h"
 
+// 版本号（同步更新 version.rc）
+#define PORTLENS_VERSION "0.1.0"
+
 // ========== 输入工具函数（全部用 _getch，避免 cin 缓冲问题） ==========
 
 static bool readInt(const char* prompt, int defaultValue, int minVal, int maxVal, int& result) {
@@ -179,7 +182,7 @@ void printHeader() {
     std::cout << "\n";
     std::cout << "    +-------------------------------------------------------+\n";
     std::cout << "    |                                                       |\n";
-    std::cout << "    |    PORT CHECKER  -  端口占用检测工具 C++版 v1.0       |\n";
+    std::cout << "    |    PortLens v" << PORTLENS_VERSION << " - 端口占用检测工具                 |\n";
     std::cout << "    |                                                       |\n";
     std::cout << "    +-------------------------------------------------------+\n";
     std::cout << "\n";
@@ -800,20 +803,205 @@ void findAvailablePortMenu() {
     printError("从 " + std::to_string(preferred) + " 起连续 " + std::to_string(maxTries) + " 个端口都被占用");
 }
 
+// ========== 命令行模式 ==========
+
+static void printCliHelp() {
+    printf("PortLens v%s - Windows 端口占用检测工具\n\n", PORTLENS_VERSION);
+    printf("用法: port_checker.exe [选项]\n\n");
+    printf("  （无参数）      启动交互式菜单\n");
+    printf("  -c <端口>      检测单个端口 (TCP+UDP)\n");
+    printf("  -l [协议]      列出所有监听端口 (tcp/udp/all, 默认 all)\n");
+    printf("  -f <进程名>    按进程名反查端口 (部分匹配)\n");
+    printf("  -s <起> <止>   扫描端口范围\n");
+    printf("  -a <端口>      从指定端口开始自动找可用端口\n");
+    printf("  -v, --version  显示版本\n");
+    printf("  -h, --help     显示帮助\n\n");
+    printf("退出码: 0=空闲/成功  1=被占用/无结果  2=参数或运行错误\n");
+}
+
+static int cliCheckPort(uint16_t port) {
+    PortInfo infos[2] = {
+        PortChecker::checkPort(port, "TCP"),
+        PortChecker::checkPort(port, "UDP")
+    };
+    const char* labels[2] = {"TCP", "UDP"};
+
+    bool occupied = false;
+    printf("端口 %d:\n", port);
+    for (int i = 0; i < 2; i++) {
+        if (infos[i].pid > 0) {
+            occupied = true;
+            std::string name = ProcessManager::getProcessName(infos[i].pid);
+            printf("  [%s] 被占用  %s (PID: %u)\n", labels[i], name.c_str(), infos[i].pid);
+            std::string path = ProcessManager::getProcessPath(infos[i].pid);
+            if (!path.empty()) {
+                printf("        路径:   %s\n", path.c_str());
+            }
+        } else {
+            printf("  [%s] 空闲\n", labels[i]);
+        }
+    }
+    return occupied ? 1 : 0;
+}
+
+static int cliList(const std::string& protocol) {
+    auto ports = PortChecker::getAllListeningPorts(protocol);
+    std::sort(ports.begin(), ports.end(), [](const PortInfo& a, const PortInfo& b) {
+        if (a.port != b.port) return a.port < b.port;
+        return a.protocol < b.protocol;
+    });
+    printPortTable(ports);
+    return ports.empty() ? 1 : 0;
+}
+
+static int cliFindByProcess(const std::string& name) {
+    std::string lowerQuery = toLowerStr(name);
+    auto ports = PortChecker::getAllListeningPorts("ALL");
+
+    std::vector<PortInfo> results;
+    for (const auto& p : ports) {
+        if (p.pid == 0) continue;
+        std::string pname = ProcessManager::getProcessName(p.pid);
+        if (toLowerStr(pname).find(lowerQuery) != std::string::npos) {
+            results.push_back(p);
+        }
+    }
+
+    printPortTable(results);
+    if (results.empty()) {
+        printf("未找到进程名包含 \"%s\" 的端口占用\n", name.c_str());
+        return 1;
+    }
+    return 0;
+}
+
+static int cliScan(uint16_t startPort, uint16_t endPort) {
+    auto ports = PortChecker::scanPorts(startPort, endPort);
+    std::sort(ports.begin(), ports.end(), [](const PortInfo& a, const PortInfo& b) {
+        if (a.port != b.port) return a.port < b.port;
+        return a.protocol < b.protocol;
+    });
+    printPortTable(ports);
+    printf("扫描 %d-%d: %d 个端口被占用\n", startPort, endPort, (int)ports.size());
+    return ports.empty() ? 1 : 0;
+}
+
+static int cliFindAvailable(uint16_t preferred) {
+    for (int i = 0; i < 10; i++) {
+        uint16_t port = preferred + i;
+        if (port < preferred) break;  // 溢出
+        PortInfo tcpInfo = PortChecker::checkPort(port, "TCP");
+        PortInfo udpInfo = PortChecker::checkPort(port, "UDP");
+        if (tcpInfo.pid == 0 && udpInfo.pid == 0) {
+            printf("可用端口: %d (从 %d 起第 %d 个)\n", port, preferred, i + 1);
+            return 0;
+        }
+    }
+    printf("从 %d 起连续 10 个端口均被占用\n", preferred);
+    return 1;
+}
+
+static bool parsePort(const char* s, uint16_t& out) {
+    if (!s || !*s) return false;
+    char* end = NULL;
+    long v = strtol(s, &end, 10);
+    if (*end != '\0' || v < 1 || v > 65535) return false;
+    out = static_cast<uint16_t>(v);
+    return true;
+}
+
+static int runCli(int argc, char* argv[]) {
+    std::string cmd = argv[1];
+
+    if (cmd == "-h" || cmd == "--help") {
+        printCliHelp();
+        return 0;
+    }
+    if (cmd == "-v" || cmd == "--version") {
+        printf("PortLens v%s\n", PORTLENS_VERSION);
+        return 0;
+    }
+
+    if (cmd == "-c") {
+        uint16_t port;
+        if (!parsePort(argc > 2 ? argv[2] : NULL, port)) {
+            printError("无效的端口号，用法: -c <端口> (1-65535)");
+            return 2;
+        }
+        return cliCheckPort(port);
+    }
+
+    if (cmd == "-l") {
+        std::string protocol = "ALL";
+        if (argc > 2) {
+            std::string p = argv[2];
+            if (p == "tcp" || p == "TCP") protocol = "TCP";
+            else if (p == "udp" || p == "UDP") protocol = "UDP";
+            else if (p == "all" || p == "ALL") protocol = "ALL";
+            else {
+                printError("无效的协议，可选: tcp / udp / all");
+                return 2;
+            }
+        }
+        return cliList(protocol);
+    }
+
+    if (cmd == "-f") {
+        if (argc < 3 || !argv[2][0]) {
+            printError("缺少进程名，用法: -f <进程名>");
+            return 2;
+        }
+        return cliFindByProcess(argv[2]);
+    }
+
+    if (cmd == "-s") {
+        uint16_t startPort, endPort;
+        if (!parsePort(argc > 2 ? argv[2] : NULL, startPort) ||
+            !parsePort(argc > 3 ? argv[3] : NULL, endPort)) {
+            printError("无效的端口范围，用法: -s <起> <止>");
+            return 2;
+        }
+        if (startPort > endPort) {
+            printError("起始端口不能大于结束端口");
+            return 2;
+        }
+        return cliScan(startPort, endPort);
+    }
+
+    if (cmd == "-a") {
+        uint16_t preferred;
+        if (!parsePort(argc > 2 ? argv[2] : NULL, preferred)) {
+            printError("无效的端口号，用法: -a <端口>");
+            return 2;
+        }
+        return cliFindAvailable(preferred);
+    }
+
+    printError("未知选项: " + cmd);
+    printCliHelp();
+    return 2;
+}
+
 // ========== 主函数 ==========
 
-int main() {
+int main(int argc, char* argv[]) {
     // 设置 UTF-8 代码页
     SetConsoleOutputCP(65001);
     SetConsoleCP(65001);
-    
+
     // 初始化控制台颜色
     saveColor();
-    
+
     if (!PortChecker::init()) {
         printError("Winsock 初始化失败");
-        _getch();
-        return 1;
+        return 2;
+    }
+
+    // 带参数: 命令行模式，执行完直接退出
+    if (argc > 1) {
+        int rc = runCli(argc, argv);
+        PortChecker::cleanup();
+        return rc;
     }
 
     while (true) {

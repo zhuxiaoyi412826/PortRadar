@@ -1,0 +1,35 @@
+// PortLens version resource
+// NOTE: keep in sync with PORTLENS_VERSION in main.cpp
+
+#include <windows.h>
+
+#define VER_MAJOR 0
+#define VER_MINOR 1
+#define VER_PATCH 0
+#define VER_STR "0.1.0"
+
+1 VERSIONINFO
+FILEVERSION VER_MAJOR,VER_MINOR,VER_PATCH,0
+PRODUCTVERSION VER_MAJOR,VER_MINOR,VER_PATCH,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "PortLens Project"
+            VALUE "FileDescription", "PortLens - Port Occupancy Checker"
+            VALUE "FileVersion", VER_STR
+            VALUE "InternalName", "PortLens"
+            VALUE "LegalCopyright", "Copyright (C) 2026 PortLens Project. MIT License."
+            VALUE "OriginalFilename", "port_checker.exe"
+            VALUE "ProductName", "PortLens"
+            VALUE "ProductVersion", VER_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

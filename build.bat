@@ -26,12 +26,22 @@ echo   PortLens - Port Checker C++ Build
 echo ================================================
 echo.
 echo [INFO] GCC ready
+echo [INFO] Compiling version resource...
+echo.
+
+windres version.rc -O coff -o version.res
+if %errorlevel% neq 0 (
+    echo [ERROR] windres failed!
+    pause
+    exit /b 1
+)
+
 echo [INFO] Compiling (static link)...
 echo.
 
 if exist port_checker.exe del /q port_checker.exe
 
-g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ main.cpp port_checker.cpp process_manager.cpp -o port_checker.exe -lws2_32 -liphlpapi -lpsapi -lversion -lshell32 -mconsole
+g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ main.cpp port_checker.cpp process_manager.cpp version.res -o port_checker.exe -lws2_32 -liphlpapi -lpsapi -lversion -lshell32 -mconsole
 
 if %errorlevel% neq 0 (
     echo.
