@@ -13,7 +13,7 @@
 #include "process_manager.h"
 
 // 版本号（同步更新 version.rc）
-#define PORTLENS_VERSION "0.3.0"
+#define PORTLENS_VERSION "0.4.0"
 
 // ========== 输入工具函数（全部用 _getch，避免 cin 缓冲问题） ==========
 
@@ -246,7 +246,11 @@ void printMenu() {
     std::cout << "  [0] ";
     restoreColor();
     std::cout << "退出程序\n";
-    
+
+    setColor(DARK_GRAY);
+    std::cout << "\n  提示: 直接输入端口号 (2 位以上) 可快速检测，如 8001\n";
+    restoreColor();
+
     printSeparator();
 }
 
@@ -328,11 +332,17 @@ void pauseForKey() {
 
 // ========== 功能函数 ==========
 
-void checkSinglePort() {
+// 检测端口占用；presetPort > 0 时跳过输入直接检测（主菜单快捷入口用）
+// 返回 true 表示内部已处理返回按键，外层无需再 pauseForKey
+bool checkSinglePort(int presetPort = -1) {
     printTitle("单端口检测");
-    
+
     int portVal;
-    readInt("请输入端口号", 5400, 1, 65535, portVal);
+    if (presetPort > 0) {
+        portVal = presetPort;
+    } else {
+        readInt("请输入端口号", 5400, 1, 65535, portVal);
+    }
     uint16_t port = static_cast<uint16_t>(portVal);
 
     std::string desc = getPortDesc(port);
@@ -350,17 +360,17 @@ void checkSinglePort() {
 
     if (!tcpOccupied && !udpOccupied) {
         printSuccess("端口 " + std::to_string(port) + " 未被占用");
-        return;
+        return false;
     }
 
     if (tcpOccupied) {
         setColor(RED);
         std::cout << "  [TCP] 端口 " << port << " 被占用\n";
         restoreColor();
-        
+
         std::string procName = ProcessManager::getProcessName(tcpInfo.pid);
         std::string procPath = ProcessManager::getProcessPath(tcpInfo.pid);
-        
+
         printf("    进程名: "); setColor(YELLOW); printf("%s\n", procName.c_str()); restoreColor();
         printf("    PID:    "); setColor(YELLOW); printf("%d\n", tcpInfo.pid); restoreColor();
         if (!procPath.empty()) {
@@ -373,16 +383,58 @@ void checkSinglePort() {
         setColor(RED);
         std::cout << "  [UDP] 端口 " << port << " 被占用\n";
         restoreColor();
-        
+
         std::string procName = ProcessManager::getProcessName(udpInfo.pid);
         std::string procPath = ProcessManager::getProcessPath(udpInfo.pid);
-        
+
         printf("    进程名: "); setColor(YELLOW); printf("%s\n", procName.c_str()); restoreColor();
         printf("    PID:    "); setColor(YELLOW); printf("%d\n", udpInfo.pid); restoreColor();
         if (!procPath.empty()) {
             printf("    路径:   "); setColor(CYAN); printf("%s\n", procPath.c_str()); restoreColor();
         }
         std::cout << "\n";
+    }
+
+    // 一键释放: K 结束占用进程，回车/空格 返回菜单
+    std::vector<uint32_t> pids;
+    if (tcpOccupied) pids.push_back(tcpInfo.pid);
+    if (udpOccupied && (!tcpOccupied || udpInfo.pid != tcpInfo.pid)) pids.push_back(udpInfo.pid);
+
+    setColor(YELLOW);
+    std::cout << "  按 [K] 一键结束占用进程 (释放端口)，按 回车/空格 返回菜单\n";
+    restoreColor();
+    std::cout.flush();
+
+    while (true) {
+        int ch = _getch();
+        if (ch == '\r' || ch == ' ' || ch == '\n') {
+            return true;  // 直接返回主菜单
+        }
+        if (ch == 'k' || ch == 'K') {
+            std::cout << "\n";
+            for (uint32_t pid : pids) {
+                std::string procName = ProcessManager::getProcessName(pid);
+                std::string ln = toLowerStr(procName);
+                if (ln.find("svchost") != std::string::npos ||
+                    ln.find("lsass") != std::string::npos ||
+                    ln.find("csrss") != std::string::npos ||
+                    ln.find("services") != std::string::npos ||
+                    ln.find("wininit") != std::string::npos ||
+                    ln.find("winlogon") != std::string::npos ||
+                    ln.find("smss") != std::string::npos ||
+                    ln == "system") {
+                    printWarning("已跳过系统关键进程 " + procName + " (PID " + std::to_string(pid) + ")，结束它可能导致系统不稳定");
+                    continue;
+                }
+                if (ProcessManager::killProcess(pid)) {
+                    printSuccess("已结束 " + procName + " (PID " + std::to_string(pid) + ")，端口 " + std::to_string(port) + " 已释放");
+                } else {
+                    printError("结束 " + procName + " (PID " + std::to_string(pid) + ") 失败（可能权限不足）");
+                }
+            }
+            pauseForKey();  // 停留显示结果，按键后返回菜单
+            return true;
+        }
     }
 }
 
@@ -1188,20 +1240,60 @@ int main(int argc, char* argv[]) {
     while (true) {
         printHeader();
         printMenu();
-        
+
         setColor(GREEN);
-        std::cout << "  请选择功能 (输入数字): ";
+        std::cout << "  请选择功能 (输入数字或直接输入端口号): ";
         restoreColor();
         std::cout.flush();
 
-        int ch = _getch();
-        char choice = (char)ch;
-        std::cout << choice << std::endl;
+        // 单键 0-9 = 菜单项；连续多位数字 = 端口号快速检测。
+        // 首键后等待 600ms：期间继续按键则视为端口输入，超时则执行菜单项
+        std::string input;
+        while (true) {
+            int ch = _getch();
+            if (ch >= '0' && ch <= '9') {
+                if (input.size() >= 5) continue;  // 端口最多 5 位
+                input += (char)ch;
+                std::cout << (char)ch;
+                std::cout.flush();
+                if (input.size() == 5) break;
+                bool more = false;
+                for (int t = 0; t < 60; t++) {
+                    if (_kbhit()) { more = true; break; }
+                    Sleep(10);
+                }
+                if (more) continue;
+                break;  // 超时，输入结束
+            } else if ((ch == '\r' || ch == '\n') && !input.empty()) {
+                break;  // 回车确认端口输入
+            } else if (ch == '\b' && !input.empty()) {
+                input.pop_back();
+                std::cout << "\b \b";
+                std::cout.flush();
+            }
+            // 其他按键忽略
+        }
+        std::cout << std::endl;
+
+        if (input.size() >= 2) {
+            // 多位数字: 判定为端口号，直接检测
+            int port = atoi(input.c_str());
+            if (port >= 1 && port <= 65535) {
+                if (!checkSinglePort(port)) pauseForKey();
+            } else {
+                printError("无效端口号: " + input + " (范围 1-65535)");
+                pauseForKey();
+            }
+            continue;
+        }
+
+        if (input.empty()) continue;
+
+        char choice = input[0];
 
         switch (choice) {
             case '1':
-                checkSinglePort();
-                pauseForKey();
+                if (!checkSinglePort()) pauseForKey();
                 break;
             case '2':
                 listAllPorts();

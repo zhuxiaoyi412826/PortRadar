@@ -16,7 +16,7 @@ A lightweight Windows port occupancy checker. Enter a port number to instantly s
 ```text
     +-------------------------------------------------------+
     |                                                       |
-    |    PortLens v0.3.0 - Port Occupancy Checker           |
+    |    PortLens v0.4.0 - Port Occupancy Checker           |
     |                                                       |
     +-------------------------------------------------------+
 
@@ -68,7 +68,7 @@ Notes: already-open CMD windows won't see the change — open a new one; only th
 
 | # | Feature | Description |
 |---|---------|-------------|
-| 1 | Single port check | Checks TCP+UDP, shows process name, PID, full executable path, and well-known port descriptions (e.g. 3306 = MySQL) |
+| 1 | Single port check | Checks TCP+UDP, shows process name, PID, full executable path, and well-known port descriptions (e.g. 3306 = MySQL); press K to terminate the occupying process and free the port; the main menu accepts a port number typed directly for a quick check |
 | 2 | List all ports | Lists every listening port, filterable by TCP / UDP / all |
 | 3 | Port range scan | Scans a range (e.g. 1-1000) and reports all occupied ports |
 | 4 | Kill process | One-click termination of the process holding a port (with confirmation) |
@@ -121,6 +121,8 @@ port -s 1 1000 > scan_result.txt
 |-----|--------|
 | `1` ~ `9` | Select a menu feature |
 | `0` | Exit |
+| Type a port number | At the main menu, typing 2+ digits (e.g. `8001`) checks that port directly — no need to enter menu [1] first |
+| `K` | After a port check result, one key terminates the occupying process and frees the port |
 | `Enter` / `Space` | Return to the menu after a feature completes |
 | `y` / `n` | Confirm dangerous operations (e.g. kill process) |
 | `ESC` / `Q` | Stop real-time monitoring |

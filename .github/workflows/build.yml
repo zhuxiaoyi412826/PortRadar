@@ -8,6 +8,10 @@ on:
     branches: [master, main]
   workflow_dispatch:
 
+# 创建 Release 需要对仓库内容的写权限
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
