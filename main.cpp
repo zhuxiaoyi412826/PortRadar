@@ -3,6 +3,7 @@
 #include <vector>
 #include <algorithm>
 #include <cctype>
+#include <cwctype>
 #include <windows.h>
 #include <shellapi.h>
 #include <conio.h>
@@ -10,6 +11,9 @@
 #include "console_util.h"
 #include "port_checker.h"
 #include "process_manager.h"
+
+// 版本号（同步更新 version.rc）
+#define PORTLENS_VERSION "0.5.0"
 
 // ========== 输入工具函数（全部用 _getch，避免 cin 缓冲问题） ==========
 
@@ -179,7 +183,7 @@ void printHeader() {
     std::cout << "\n";
     std::cout << "    +-------------------------------------------------------+\n";
     std::cout << "    |                                                       |\n";
-    std::cout << "    |    PORT CHECKER  -  端口占用检测工具 C++版 v1.0       |\n";
+    std::cout << "    |    PortLens v" << PORTLENS_VERSION << " - 端口占用检测工具                 |\n";
     std::cout << "    |                                                       |\n";
     std::cout << "    +-------------------------------------------------------+\n";
     std::cout << "\n";
@@ -242,7 +246,12 @@ void printMenu() {
     std::cout << "  [0] ";
     restoreColor();
     std::cout << "退出程序\n";
-    
+
+    setColor(DARK_GRAY);
+    std::cout << "\n  提示: 直接输入端口号 (2 位以上) 可快速检测，如 8001\n";
+    std::cout << "        Win+R 输入 port:端口号 可在任意界面直达检测，如 port:8001\n";
+    restoreColor();
+
     printSeparator();
 }
 
@@ -308,9 +317,9 @@ void printPortTable(const std::vector<PortInfo>& ports, bool showProcess = true)
     restoreColor();
 }
 
-void pauseForKey() {
+void pauseForKey(const char* action = "返回菜单") {
     setColor(DARK_GRAY);
-    std::cout << "\n  按 回车键 或 空格键 返回菜单...";
+    std::cout << "\n  按 回车键 或 空格键 " << action << "...";
     restoreColor();
     std::cout.flush();
     
@@ -324,11 +333,17 @@ void pauseForKey() {
 
 // ========== 功能函数 ==========
 
-void checkSinglePort() {
+// 检测端口占用；presetPort > 0 时跳过输入直接检测（主菜单快捷入口用）
+// 返回 0=端口空闲（外层需 pauseForKey），1=被占用（内部已处理按键）
+int checkSinglePort(int presetPort = -1, bool fromMenu = true) {
     printTitle("单端口检测");
-    
+
     int portVal;
-    readInt("请输入端口号", 5400, 1, 65535, portVal);
+    if (presetPort > 0) {
+        portVal = presetPort;
+    } else {
+        readInt("请输入端口号", 5400, 1, 65535, portVal);
+    }
     uint16_t port = static_cast<uint16_t>(portVal);
 
     std::string desc = getPortDesc(port);
@@ -346,17 +361,17 @@ void checkSinglePort() {
 
     if (!tcpOccupied && !udpOccupied) {
         printSuccess("端口 " + std::to_string(port) + " 未被占用");
-        return;
+        return 0;
     }
 
     if (tcpOccupied) {
         setColor(RED);
         std::cout << "  [TCP] 端口 " << port << " 被占用\n";
         restoreColor();
-        
+
         std::string procName = ProcessManager::getProcessName(tcpInfo.pid);
         std::string procPath = ProcessManager::getProcessPath(tcpInfo.pid);
-        
+
         printf("    进程名: "); setColor(YELLOW); printf("%s\n", procName.c_str()); restoreColor();
         printf("    PID:    "); setColor(YELLOW); printf("%d\n", tcpInfo.pid); restoreColor();
         if (!procPath.empty()) {
@@ -369,16 +384,58 @@ void checkSinglePort() {
         setColor(RED);
         std::cout << "  [UDP] 端口 " << port << " 被占用\n";
         restoreColor();
-        
+
         std::string procName = ProcessManager::getProcessName(udpInfo.pid);
         std::string procPath = ProcessManager::getProcessPath(udpInfo.pid);
-        
+
         printf("    进程名: "); setColor(YELLOW); printf("%s\n", procName.c_str()); restoreColor();
         printf("    PID:    "); setColor(YELLOW); printf("%d\n", udpInfo.pid); restoreColor();
         if (!procPath.empty()) {
             printf("    路径:   "); setColor(CYAN); printf("%s\n", procPath.c_str()); restoreColor();
         }
         std::cout << "\n";
+    }
+
+    // 一键释放: K 结束占用进程，回车/空格 返回菜单
+    std::vector<uint32_t> pids;
+    if (tcpOccupied) pids.push_back(tcpInfo.pid);
+    if (udpOccupied && (!tcpOccupied || udpInfo.pid != tcpInfo.pid)) pids.push_back(udpInfo.pid);
+
+    setColor(YELLOW);
+    std::cout << "  按 [K] 一键结束占用进程 (释放端口)，按 回车/空格 " << (fromMenu ? "返回菜单" : "退出") << "\n";
+    restoreColor();
+    std::cout.flush();
+
+    while (true) {
+        int ch = _getch();
+        if (ch == '\r' || ch == ' ' || ch == '\n') {
+            return 1;  // 直接返回主菜单
+        }
+        if (ch == 'k' || ch == 'K') {
+            std::cout << "\n";
+            for (uint32_t pid : pids) {
+                std::string procName = ProcessManager::getProcessName(pid);
+                std::string ln = toLowerStr(procName);
+                if (ln.find("svchost") != std::string::npos ||
+                    ln.find("lsass") != std::string::npos ||
+                    ln.find("csrss") != std::string::npos ||
+                    ln.find("services") != std::string::npos ||
+                    ln.find("wininit") != std::string::npos ||
+                    ln.find("winlogon") != std::string::npos ||
+                    ln.find("smss") != std::string::npos ||
+                    ln == "system") {
+                    printWarning("已跳过系统关键进程 " + procName + " (PID " + std::to_string(pid) + ")，结束它可能导致系统不稳定");
+                    continue;
+                }
+                if (ProcessManager::killProcess(pid)) {
+                    printSuccess("已结束 " + procName + " (PID " + std::to_string(pid) + ")，端口 " + std::to_string(port) + " 已释放");
+                } else {
+                    printError("结束 " + procName + " (PID " + std::to_string(pid) + ") 失败（可能权限不足）");
+                }
+            }
+            pauseForKey(fromMenu ? "返回菜单" : "退出");
+            return 1;
+        }
     }
 }
 
@@ -800,39 +857,562 @@ void findAvailablePortMenu() {
     printError("从 " + std::to_string(preferred) + " 起连续 " + std::to_string(maxTries) + " 个端口都被占用");
 }
 
+// ========== PATH 管理（port 命令支持） ==========
+
+// 获取 exe 所在目录（绝对路径）
+static std::wstring getExeDirW() {
+    wchar_t path[MAX_PATH];
+    DWORD n = GetModuleFileNameW(NULL, path, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return L"";
+    std::wstring p(path);
+    size_t pos = p.find_last_of(L"\\/");
+    return (pos == std::wstring::npos) ? L"" : p.substr(0, pos);
+}
+
+static std::wstring trimTrailingSlash(std::wstring s) {
+    while (!s.empty() && (s.back() == L'\\' || s.back() == L'/')) s.pop_back();
+    return s;
+}
+
+static bool equalsIgnoreCaseW(const std::wstring& a, const std::wstring& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); i++)
+        if (towlower(a[i]) != towlower(b[i])) return false;
+    return true;
+}
+
+static std::vector<std::wstring> splitPathEntries(const std::wstring& s) {
+    std::vector<std::wstring> out;
+    std::wstring cur;
+    for (wchar_t c : s) {
+        if (c == L';') {
+            if (!cur.empty()) out.push_back(cur);
+            cur.clear();
+        } else {
+            cur += c;
+        }
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
+// 读取用户 Path 原始值（保留变量形式）；不存在返回 false
+static bool readUserPathRaw(std::wstring& raw, DWORD& type) {
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+        return false;
+
+    DWORD size = 0;
+    if (RegQueryValueExW(hKey, L"Path", NULL, &type, NULL, &size) != ERROR_SUCCESS || size == 0) {
+        RegCloseKey(hKey);
+        return false;
+    }
+
+    std::vector<wchar_t> buf(size / sizeof(wchar_t) + 1);
+    if (RegQueryValueExW(hKey, L"Path", NULL, &type, (LPBYTE)buf.data(), &size) != ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+        return false;
+    }
+    RegCloseKey(hKey);
+    raw.assign(buf.data());
+    return true;
+}
+
+// 通知系统环境变量已变化（新开的 CMD 立即可用，无需注销）
+static void broadcastEnvChange() {
+    SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0,
+        (LPARAM)L"Environment", SMTO_ABORTIFHUNG, 5000, NULL);
+}
+
+// exe 目录是否已在用户 PATH 中（各项展开变量后比较）
+static bool isExeDirInPath() {
+    std::wstring exeDir = trimTrailingSlash(getExeDirW());
+    if (exeDir.empty()) return false;
+
+    std::wstring raw;
+    DWORD type;
+    if (!readUserPathRaw(raw, type)) return false;
+
+    for (const auto& entry : splitPathEntries(raw)) {
+        wchar_t expBuf[2048];
+        DWORD m = ExpandEnvironmentStringsW(entry.c_str(), expBuf, 2048);
+        std::wstring cmp = (m > 0 && m < 2048) ? std::wstring(expBuf) : entry;
+        if (equalsIgnoreCaseW(trimTrailingSlash(cmp), exeDir)) return true;
+    }
+    return false;
+}
+
+// 将 exe 目录加入用户 PATH（已存在则跳过）。写回时保留原有变量形式
+static bool installToPath() {
+    std::wstring exeDir = trimTrailingSlash(getExeDirW());
+    if (exeDir.empty()) return false;
+    if (isExeDirInPath()) return true;
+
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_READ | KEY_WRITE, &hKey) != ERROR_SUCCESS)
+        return false;
+
+    std::wstring raw;
+    DWORD type;
+    bool has = readUserPathRaw(raw, type);
+
+    std::wstring newVal = raw;
+    if (!newVal.empty() && newVal.back() != L';') newVal += L';';
+    newVal += exeDir;
+
+    bool ok = RegSetValueExW(hKey, L"Path", 0,
+        has ? type : REG_EXPAND_SZ,
+        (const BYTE*)newVal.c_str(),
+        (DWORD)((newVal.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
+    RegCloseKey(hKey);
+
+    if (ok) broadcastEnvChange();
+    return ok;
+}
+
+// 从用户 PATH 中移除 exe 目录
+static bool removeFromPath() {
+    std::wstring exeDir = trimTrailingSlash(getExeDirW());
+    if (exeDir.empty()) return false;
+
+    std::wstring raw;
+    DWORD type;
+    if (!readUserPathRaw(raw, type)) return false;
+
+    std::wstring result;
+    bool changed = false;
+    for (const auto& entry : splitPathEntries(raw)) {
+        wchar_t expBuf[2048];
+        DWORD m = ExpandEnvironmentStringsW(entry.c_str(), expBuf, 2048);
+        std::wstring cmp = (m > 0 && m < 2048) ? std::wstring(expBuf) : entry;
+        if (equalsIgnoreCaseW(trimTrailingSlash(cmp), exeDir)) {
+            changed = true;
+            continue;
+        }
+        if (!result.empty()) result += L';';
+        result += entry;
+    }
+    if (!changed) return false;
+
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Environment", 0, KEY_WRITE, &hKey) != ERROR_SUCCESS)
+        return false;
+
+    bool ok = RegSetValueExW(hKey, L"Path", 0, type,
+        (const BYTE*)result.c_str(),
+        (DWORD)((result.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
+    RegCloseKey(hKey);
+
+    if (ok) broadcastEnvChange();
+    return ok;
+}
+
+// ========== port: URI 协议支持（port:8001 直达检测） ==========
+
+// 分类"直接检测"形式的参数:
+//   0 = 不是直接检测形式（交给 runCli 处理）
+//   1 = 有效端口，写入 out
+//   2 = 形式正确但端口无效（非数字/超出 1-65535）
+// 支持: "80" / ":80" / "port:80" / "port://80" / "PORT:80"
+static int classifyDirectPort(const char* s, uint16_t& out) {
+    if (!s || !*s) return 0;
+    std::string str(s);
+    while (!str.empty() && (str.back() == '/' || str.back() == ' ' ||
+                            str.back() == '\r' || str.back() == '\n')) {
+        str.pop_back();
+    }
+    if (str.empty()) return 0;
+
+    size_t i = 0;
+    bool directForm = false;
+    if (str.size() >= 5 && toLowerStr(str.substr(0, 5)) == "port:") {
+        i = 5;
+        directForm = true;
+    } else if (str[0] == ':') {
+        i = 1;
+        directForm = true;
+    } else if (!isdigit((unsigned char)str[0])) {
+        return 0;
+    }
+
+    while (i < str.size() && (str[i] == '/' || str[i] == ':')) i++;
+    if (i >= str.size()) return directForm ? 2 : 0;
+
+    for (size_t j = i; j < str.size(); j++) {
+        if (!isdigit((unsigned char)str[j])) return directForm ? 2 : 0;
+    }
+
+    long v = strtol(str.c_str() + i, NULL, 10);
+    if (v < 1 || v > 65535) return 2;
+    out = static_cast<uint16_t>(v);
+    return 1;
+}
+
+// 注册 port: 协议到当前用户。
+// 注册后 Win+R / 浏览器地址栏 / 开始菜单搜索 输入 port:8001 可直接启动检测
+static bool registerPortProtocol() {
+    wchar_t exe[MAX_PATH];
+    if (GetModuleFileNameW(NULL, exe, MAX_PATH) == 0) return false;
+
+    HKEY hKey;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\port", 0, NULL, 0,
+        KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
+        return false;
+
+    bool ok = true;
+    ok = ok && RegSetValueExW(hKey, NULL, 0, REG_SZ,
+        (const BYTE*)L"URL:PortLens Protocol",
+        (DWORD)(wcslen(L"URL:PortLens Protocol") + 1) * sizeof(wchar_t)) == ERROR_SUCCESS;
+    ok = ok && RegSetValueExW(hKey, L"URL Protocol", 0, REG_SZ,
+        (const BYTE*)L"", sizeof(wchar_t)) == ERROR_SUCCESS;
+
+    HKEY hCmd;
+    if (RegCreateKeyExW(hKey, L"shell\\open\\command", 0, NULL, 0,
+        KEY_WRITE, NULL, &hCmd, NULL) == ERROR_SUCCESS) {
+        std::wstring cmd = L"\"" + std::wstring(exe) + L"\" \"%1\"";
+        ok = ok && RegSetValueExW(hCmd, NULL, 0, REG_SZ,
+            (const BYTE*)cmd.c_str(),
+            (DWORD)((cmd.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
+        RegCloseKey(hCmd);
+    } else {
+        ok = false;
+    }
+    RegCloseKey(hKey);
+    return ok;
+}
+
+// 递归删除注册表键（用于注销 port: 协议）
+static void deleteRegKeyRecursive(HKEY parent, const wchar_t* name) {
+    HKEY hKey;
+    if (RegOpenKeyExW(parent, name, 0, KEY_READ, &hKey) != ERROR_SUCCESS) return;
+    wchar_t child[256];
+    while (RegEnumKeyW(hKey, 0, child, 256) == ERROR_SUCCESS) {
+        deleteRegKeyRecursive(hKey, child);
+    }
+    RegCloseKey(hKey);
+    RegDeleteKeyW(parent, name);
+}
+
+// 注销 port: 协议
+static bool unregisterPortProtocol() {
+    deleteRegKeyRecursive(HKEY_CURRENT_USER, L"Software\\Classes\\port");
+    return true;
+}
+
+// ========== 命令行模式 ==========
+
+static void printCliHelp() {
+    printf("PortLens v%s - Windows 端口占用检测工具\n\n", PORTLENS_VERSION);
+    printf("用法: port [选项]  （已安装到 PATH 后任意目录可用）\n\n");
+    printf("  port <端口>     直接检测端口（如 port 80），显示详情，按 K 释放端口\n");
+    printf("  port:<端口>     直达检测（如 port:8001，Win+R / 浏览器地址栏直接输入）\n");
+    printf("  （无参数）      启动交互式菜单\n");
+    printf("  -c <端口>      检测单个端口 (TCP+UDP)\n");
+    printf("  -l [协议]      列出所有监听端口 (tcp/udp/all, 默认 all)\n");
+    printf("  -f <进程名>    按进程名反查端口 (部分匹配)\n");
+    printf("  -s <起> <止>   扫描端口范围\n");
+    printf("  -a <端口>      从指定端口开始自动找可用端口\n");
+    printf("  --install-path    将本程序目录加入用户 PATH (port 命令)\n");
+    printf("  --uninstall-path  从用户 PATH 移除本程序目录\n");
+    printf("  -v, --version  显示版本\n");
+    printf("  -h, --help     显示帮助\n\n");
+    printf("退出码: 0=空闲/成功  1=被占用/无结果  2=参数或运行错误\n");
+}
+
+static int cliCheckPort(uint16_t port) {
+    PortInfo infos[2] = {
+        PortChecker::checkPort(port, "TCP"),
+        PortChecker::checkPort(port, "UDP")
+    };
+    const char* labels[2] = {"TCP", "UDP"};
+
+    bool occupied = false;
+    printf("端口 %d:\n", port);
+    for (int i = 0; i < 2; i++) {
+        if (infos[i].pid > 0) {
+            occupied = true;
+            std::string name = ProcessManager::getProcessName(infos[i].pid);
+            printf("  [%s] 被占用  %s (PID: %u)\n", labels[i], name.c_str(), infos[i].pid);
+            std::string path = ProcessManager::getProcessPath(infos[i].pid);
+            if (!path.empty()) {
+                printf("        路径:   %s\n", path.c_str());
+            }
+        } else {
+            printf("  [%s] 空闲\n", labels[i]);
+        }
+    }
+    return occupied ? 1 : 0;
+}
+
+static int cliList(const std::string& protocol) {
+    auto ports = PortChecker::getAllListeningPorts(protocol);
+    std::sort(ports.begin(), ports.end(), [](const PortInfo& a, const PortInfo& b) {
+        if (a.port != b.port) return a.port < b.port;
+        return a.protocol < b.protocol;
+    });
+    printPortTable(ports);
+    return ports.empty() ? 1 : 0;
+}
+
+static int cliFindByProcess(const std::string& name) {
+    std::string lowerQuery = toLowerStr(name);
+    auto ports = PortChecker::getAllListeningPorts("ALL");
+
+    std::vector<PortInfo> results;
+    for (const auto& p : ports) {
+        if (p.pid == 0) continue;
+        std::string pname = ProcessManager::getProcessName(p.pid);
+        if (toLowerStr(pname).find(lowerQuery) != std::string::npos) {
+            results.push_back(p);
+        }
+    }
+
+    printPortTable(results);
+    if (results.empty()) {
+        printf("未找到进程名包含 \"%s\" 的端口占用\n", name.c_str());
+        return 1;
+    }
+    return 0;
+}
+
+static int cliScan(uint16_t startPort, uint16_t endPort) {
+    auto ports = PortChecker::scanPorts(startPort, endPort);
+    std::sort(ports.begin(), ports.end(), [](const PortInfo& a, const PortInfo& b) {
+        if (a.port != b.port) return a.port < b.port;
+        return a.protocol < b.protocol;
+    });
+    printPortTable(ports);
+    printf("扫描 %d-%d: %d 个端口被占用\n", startPort, endPort, (int)ports.size());
+    return ports.empty() ? 1 : 0;
+}
+
+static int cliFindAvailable(uint16_t preferred) {
+    for (int i = 0; i < 10; i++) {
+        uint16_t port = preferred + i;
+        if (port < preferred) break;  // 溢出
+        PortInfo tcpInfo = PortChecker::checkPort(port, "TCP");
+        PortInfo udpInfo = PortChecker::checkPort(port, "UDP");
+        if (tcpInfo.pid == 0 && udpInfo.pid == 0) {
+            printf("可用端口: %d (从 %d 起第 %d 个)\n", port, preferred, i + 1);
+            return 0;
+        }
+    }
+    printf("从 %d 起连续 10 个端口均被占用\n", preferred);
+    return 1;
+}
+
+static bool parsePort(const char* s, uint16_t& out) {
+    if (!s || !*s) return false;
+    char* end = NULL;
+    long v = strtol(s, &end, 10);
+    if (*end != '\0' || v < 1 || v > 65535) return false;
+    out = static_cast<uint16_t>(v);
+    return true;
+}
+
+static int runCli(int argc, char* argv[]) {
+    std::string cmd = argv[1];
+
+    if (cmd == "-h" || cmd == "--help") {
+        printCliHelp();
+        return 0;
+    }
+    if (cmd == "-v" || cmd == "--version") {
+        printf("PortLens v%s\n", PORTLENS_VERSION);
+        return 0;
+    }
+
+    if (cmd == "--install-path") {
+        bool pathOk = installToPath();
+        bool uriOk = registerPortProtocol();
+        if (pathOk || uriOk) {
+            if (pathOk) printf("已将本程序目录加入用户 PATH\n");
+            if (uriOk) printf("已注册 port: 协议 (Win+R 输入 port:8001 可直达检测)\n");
+            printf("新开一个 CMD 窗口，输入 port 即可使用\n");
+            return 0;
+        }
+        printError("安装失败（注册表写入被拒绝）");
+        return 2;
+    }
+
+    if (cmd == "--uninstall-path") {
+        bool pathRemoved = removeFromPath();
+        bool uriRemoved = unregisterPortProtocol();
+        if (pathRemoved || uriRemoved) {
+            printf("已卸载: PATH 条目%s，port: 协议%s\n",
+                pathRemoved ? "已移除" : "(未找到)",
+                uriRemoved ? "已注销" : "(未找到)");
+            return 0;
+        }
+        printError("未找到本程序的 PATH 条目和 port: 协议，无需卸载");
+        return 2;
+    }
+
+    if (cmd == "-c") {
+        uint16_t port;
+        if (!parsePort(argc > 2 ? argv[2] : NULL, port)) {
+            printError("无效的端口号，用法: -c <端口> (1-65535)");
+            return 2;
+        }
+        return cliCheckPort(port);
+    }
+
+    if (cmd == "-l") {
+        std::string protocol = "ALL";
+        if (argc > 2) {
+            std::string p = argv[2];
+            if (p == "tcp" || p == "TCP") protocol = "TCP";
+            else if (p == "udp" || p == "UDP") protocol = "UDP";
+            else if (p == "all" || p == "ALL") protocol = "ALL";
+            else {
+                printError("无效的协议，可选: tcp / udp / all");
+                return 2;
+            }
+        }
+        return cliList(protocol);
+    }
+
+    if (cmd == "-f") {
+        if (argc < 3 || !argv[2][0]) {
+            printError("缺少进程名，用法: -f <进程名>");
+            return 2;
+        }
+        return cliFindByProcess(argv[2]);
+    }
+
+    if (cmd == "-s") {
+        uint16_t startPort, endPort;
+        if (!parsePort(argc > 2 ? argv[2] : NULL, startPort) ||
+            !parsePort(argc > 3 ? argv[3] : NULL, endPort)) {
+            printError("无效的端口范围，用法: -s <起> <止>");
+            return 2;
+        }
+        if (startPort > endPort) {
+            printError("起始端口不能大于结束端口");
+            return 2;
+        }
+        return cliScan(startPort, endPort);
+    }
+
+    if (cmd == "-a") {
+        uint16_t preferred;
+        if (!parsePort(argc > 2 ? argv[2] : NULL, preferred)) {
+            printError("无效的端口号，用法: -a <端口>");
+            return 2;
+        }
+        return cliFindAvailable(preferred);
+    }
+
+    printError("未知选项: " + cmd);
+    printCliHelp();
+    return 2;
+}
+
 // ========== 主函数 ==========
 
-int main() {
+int main(int argc, char* argv[]) {
     // 设置 UTF-8 代码页
     SetConsoleOutputCP(65001);
     SetConsoleCP(65001);
-    
+
     // 初始化控制台颜色
     saveColor();
-    
+
     if (!PortChecker::init()) {
         printError("Winsock 初始化失败");
-        _getch();
-        return 1;
+        return 2;
     }
+
+    // 带参数: 命令行模式，执行完直接退出
+    if (argc > 1) {
+        // 直接检测形式: port 80 / port :80 / port port:80 / port:80（URI 协议启动）
+        uint16_t directPort;
+        int dc = classifyDirectPort(argv[1], directPort);
+        if (dc == 1) {
+            printHeader();
+            int occ = checkSinglePort(directPort, false);
+            if (!occ) pauseForKey("退出");
+            PortChecker::cleanup();
+            return occ;
+        }
+        if (dc == 2) {
+            printError("无效的端口号: " + std::string(argv[1]) + " (范围 1-65535)");
+            PortChecker::cleanup();
+            return 2;
+        }
+        int rc = runCli(argc, argv);
+        PortChecker::cleanup();
+        return rc;
+    }
+
+    // 双击启动（交互模式）: 首次运行自动把本目录加入 PATH，
+    // 之后在任意 CMD 输入 port 即可调用；已安装则静默跳过
+    if (!isExeDirInPath()) {
+        if (installToPath()) {
+            printSuccess("已安装 port 命令: 新开 CMD 窗口后，任意目录输入 port 即可使用");
+            printInfo("卸载: port --uninstall-path");
+        }
+    }
+    // 注册/刷新 port: URI 协议（exe 移动位置后自动指向新路径）
+    registerPortProtocol();
 
     while (true) {
         printHeader();
         printMenu();
-        
+
         setColor(GREEN);
-        std::cout << "  请选择功能 (输入数字): ";
+        std::cout << "  请选择功能 (输入数字或直接输入端口号): ";
         restoreColor();
         std::cout.flush();
 
-        int ch = _getch();
-        char choice = (char)ch;
-        std::cout << choice << std::endl;
+        // 单键 0-9 = 菜单项；连续多位数字 = 端口号快速检测。
+        // 首键后等待 600ms：期间继续按键则视为端口输入，超时则执行菜单项
+        std::string input;
+        while (true) {
+            int ch = _getch();
+            if (ch >= '0' && ch <= '9') {
+                if (input.size() >= 5) continue;  // 端口最多 5 位
+                input += (char)ch;
+                std::cout << (char)ch;
+                std::cout.flush();
+                if (input.size() == 5) break;
+                bool more = false;
+                for (int t = 0; t < 60; t++) {
+                    if (_kbhit()) { more = true; break; }
+                    Sleep(10);
+                }
+                if (more) continue;
+                break;  // 超时，输入结束
+            } else if ((ch == '\r' || ch == '\n') && !input.empty()) {
+                break;  // 回车确认端口输入
+            } else if (ch == '\b' && !input.empty()) {
+                input.pop_back();
+                std::cout << "\b \b";
+                std::cout.flush();
+            }
+            // 其他按键忽略
+        }
+        std::cout << std::endl;
+
+        if (input.size() >= 2) {
+            // 多位数字: 判定为端口号，直接检测
+            int port = atoi(input.c_str());
+            if (port >= 1 && port <= 65535) {
+                if (!checkSinglePort(port)) pauseForKey();
+            } else {
+                printError("无效端口号: " + input + " (范围 1-65535)");
+                pauseForKey();
+            }
+            continue;
+        }
+
+        if (input.empty()) continue;
+
+        char choice = input[0];
 
         switch (choice) {
             case '1':
-                checkSinglePort();
-                pauseForKey();
+                if (!checkSinglePort()) pauseForKey();
                 break;
             case '2':
                 listAllPorts();
