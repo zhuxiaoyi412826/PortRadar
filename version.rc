@@ -4,9 +4,9 @@
 #include <windows.h>
 
 #define VER_MAJOR 0
-#define VER_MINOR 4
+#define VER_MINOR 5
 #define VER_PATCH 0
-#define VER_STR "0.4.0"
+#define VER_STR "0.5.0"
 
 1 VERSIONINFO
 FILEVERSION VER_MAJOR,VER_MINOR,VER_PATCH,0

@@ -13,7 +13,7 @@
 #include "process_manager.h"
 
 // 版本号（同步更新 version.rc）
-#define PORTLENS_VERSION "0.4.0"
+#define PORTLENS_VERSION "0.5.0"
 
 // ========== 输入工具函数（全部用 _getch，避免 cin 缓冲问题） ==========
 
@@ -249,6 +249,7 @@ void printMenu() {
 
     setColor(DARK_GRAY);
     std::cout << "\n  提示: 直接输入端口号 (2 位以上) 可快速检测，如 8001\n";
+    std::cout << "        Win+R 输入 port:端口号 可在任意界面直达检测，如 port:8001\n";
     restoreColor();
 
     printSeparator();
@@ -316,9 +317,9 @@ void printPortTable(const std::vector<PortInfo>& ports, bool showProcess = true)
     restoreColor();
 }
 
-void pauseForKey() {
+void pauseForKey(const char* action = "返回菜单") {
     setColor(DARK_GRAY);
-    std::cout << "\n  按 回车键 或 空格键 返回菜单...";
+    std::cout << "\n  按 回车键 或 空格键 " << action << "...";
     restoreColor();
     std::cout.flush();
     
@@ -333,8 +334,8 @@ void pauseForKey() {
 // ========== 功能函数 ==========
 
 // 检测端口占用；presetPort > 0 时跳过输入直接检测（主菜单快捷入口用）
-// 返回 true 表示内部已处理返回按键，外层无需再 pauseForKey
-bool checkSinglePort(int presetPort = -1) {
+// 返回 0=端口空闲（外层需 pauseForKey），1=被占用（内部已处理按键）
+int checkSinglePort(int presetPort = -1, bool fromMenu = true) {
     printTitle("单端口检测");
 
     int portVal;
@@ -360,7 +361,7 @@ bool checkSinglePort(int presetPort = -1) {
 
     if (!tcpOccupied && !udpOccupied) {
         printSuccess("端口 " + std::to_string(port) + " 未被占用");
-        return false;
+        return 0;
     }
 
     if (tcpOccupied) {
@@ -401,14 +402,14 @@ bool checkSinglePort(int presetPort = -1) {
     if (udpOccupied && (!tcpOccupied || udpInfo.pid != tcpInfo.pid)) pids.push_back(udpInfo.pid);
 
     setColor(YELLOW);
-    std::cout << "  按 [K] 一键结束占用进程 (释放端口)，按 回车/空格 返回菜单\n";
+    std::cout << "  按 [K] 一键结束占用进程 (释放端口)，按 回车/空格 " << (fromMenu ? "返回菜单" : "退出") << "\n";
     restoreColor();
     std::cout.flush();
 
     while (true) {
         int ch = _getch();
         if (ch == '\r' || ch == ' ' || ch == '\n') {
-            return true;  // 直接返回主菜单
+            return 1;  // 直接返回主菜单
         }
         if (ch == 'k' || ch == 'K') {
             std::cout << "\n";
@@ -432,8 +433,8 @@ bool checkSinglePort(int presetPort = -1) {
                     printError("结束 " + procName + " (PID " + std::to_string(pid) + ") 失败（可能权限不足）");
                 }
             }
-            pauseForKey();  // 停留显示结果，按键后返回菜单
-            return true;
+            pauseForKey(fromMenu ? "返回菜单" : "退出");
+            return 1;
         }
     }
 }
@@ -1006,11 +1007,105 @@ static bool removeFromPath() {
     return ok;
 }
 
+// ========== port: URI 协议支持（port:8001 直达检测） ==========
+
+// 分类"直接检测"形式的参数:
+//   0 = 不是直接检测形式（交给 runCli 处理）
+//   1 = 有效端口，写入 out
+//   2 = 形式正确但端口无效（非数字/超出 1-65535）
+// 支持: "80" / ":80" / "port:80" / "port://80" / "PORT:80"
+static int classifyDirectPort(const char* s, uint16_t& out) {
+    if (!s || !*s) return 0;
+    std::string str(s);
+    while (!str.empty() && (str.back() == '/' || str.back() == ' ' ||
+                            str.back() == '\r' || str.back() == '\n')) {
+        str.pop_back();
+    }
+    if (str.empty()) return 0;
+
+    size_t i = 0;
+    bool directForm = false;
+    if (str.size() >= 5 && toLowerStr(str.substr(0, 5)) == "port:") {
+        i = 5;
+        directForm = true;
+    } else if (str[0] == ':') {
+        i = 1;
+        directForm = true;
+    } else if (!isdigit((unsigned char)str[0])) {
+        return 0;
+    }
+
+    while (i < str.size() && (str[i] == '/' || str[i] == ':')) i++;
+    if (i >= str.size()) return directForm ? 2 : 0;
+
+    for (size_t j = i; j < str.size(); j++) {
+        if (!isdigit((unsigned char)str[j])) return directForm ? 2 : 0;
+    }
+
+    long v = strtol(str.c_str() + i, NULL, 10);
+    if (v < 1 || v > 65535) return 2;
+    out = static_cast<uint16_t>(v);
+    return 1;
+}
+
+// 注册 port: 协议到当前用户。
+// 注册后 Win+R / 浏览器地址栏 / 开始菜单搜索 输入 port:8001 可直接启动检测
+static bool registerPortProtocol() {
+    wchar_t exe[MAX_PATH];
+    if (GetModuleFileNameW(NULL, exe, MAX_PATH) == 0) return false;
+
+    HKEY hKey;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\port", 0, NULL, 0,
+        KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
+        return false;
+
+    bool ok = true;
+    ok = ok && RegSetValueExW(hKey, NULL, 0, REG_SZ,
+        (const BYTE*)L"URL:PortLens Protocol",
+        (DWORD)(wcslen(L"URL:PortLens Protocol") + 1) * sizeof(wchar_t)) == ERROR_SUCCESS;
+    ok = ok && RegSetValueExW(hKey, L"URL Protocol", 0, REG_SZ,
+        (const BYTE*)L"", sizeof(wchar_t)) == ERROR_SUCCESS;
+
+    HKEY hCmd;
+    if (RegCreateKeyExW(hKey, L"shell\\open\\command", 0, NULL, 0,
+        KEY_WRITE, NULL, &hCmd, NULL) == ERROR_SUCCESS) {
+        std::wstring cmd = L"\"" + std::wstring(exe) + L"\" \"%1\"";
+        ok = ok && RegSetValueExW(hCmd, NULL, 0, REG_SZ,
+            (const BYTE*)cmd.c_str(),
+            (DWORD)((cmd.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
+        RegCloseKey(hCmd);
+    } else {
+        ok = false;
+    }
+    RegCloseKey(hKey);
+    return ok;
+}
+
+// 递归删除注册表键（用于注销 port: 协议）
+static void deleteRegKeyRecursive(HKEY parent, const wchar_t* name) {
+    HKEY hKey;
+    if (RegOpenKeyExW(parent, name, 0, KEY_READ, &hKey) != ERROR_SUCCESS) return;
+    wchar_t child[256];
+    while (RegEnumKeyW(hKey, 0, child, 256) == ERROR_SUCCESS) {
+        deleteRegKeyRecursive(hKey, child);
+    }
+    RegCloseKey(hKey);
+    RegDeleteKeyW(parent, name);
+}
+
+// 注销 port: 协议
+static bool unregisterPortProtocol() {
+    deleteRegKeyRecursive(HKEY_CURRENT_USER, L"Software\\Classes\\port");
+    return true;
+}
+
 // ========== 命令行模式 ==========
 
 static void printCliHelp() {
     printf("PortLens v%s - Windows 端口占用检测工具\n\n", PORTLENS_VERSION);
     printf("用法: port [选项]  （已安装到 PATH 后任意目录可用）\n\n");
+    printf("  port <端口>     直接检测端口（如 port 80），显示详情，按 K 释放端口\n");
+    printf("  port:<端口>     直达检测（如 port:8001，Win+R / 浏览器地址栏直接输入）\n");
     printf("  （无参数）      启动交互式菜单\n");
     printf("  -c <端口>      检测单个端口 (TCP+UDP)\n");
     printf("  -l [协议]      列出所有监听端口 (tcp/udp/all, 默认 all)\n");
@@ -1128,21 +1223,28 @@ static int runCli(int argc, char* argv[]) {
     }
 
     if (cmd == "--install-path") {
-        if (installToPath()) {
-            printf("已将本程序目录加入用户 PATH\n");
+        bool pathOk = installToPath();
+        bool uriOk = registerPortProtocol();
+        if (pathOk || uriOk) {
+            if (pathOk) printf("已将本程序目录加入用户 PATH\n");
+            if (uriOk) printf("已注册 port: 协议 (Win+R 输入 port:8001 可直达检测)\n");
             printf("新开一个 CMD 窗口，输入 port 即可使用\n");
             return 0;
         }
-        printError("PATH 安装失败（注册表写入被拒绝）");
+        printError("安装失败（注册表写入被拒绝）");
         return 2;
     }
 
     if (cmd == "--uninstall-path") {
-        if (removeFromPath()) {
-            printf("已从用户 PATH 移除本程序目录\n");
+        bool pathRemoved = removeFromPath();
+        bool uriRemoved = unregisterPortProtocol();
+        if (pathRemoved || uriRemoved) {
+            printf("已卸载: PATH 条目%s，port: 协议%s\n",
+                pathRemoved ? "已移除" : "(未找到)",
+                uriRemoved ? "已注销" : "(未找到)");
             return 0;
         }
-        printError("PATH 中未找到本程序目录，无需移除");
+        printError("未找到本程序的 PATH 条目和 port: 协议，无需卸载");
         return 2;
     }
 
@@ -1223,6 +1325,21 @@ int main(int argc, char* argv[]) {
 
     // 带参数: 命令行模式，执行完直接退出
     if (argc > 1) {
+        // 直接检测形式: port 80 / port :80 / port port:80 / port:80（URI 协议启动）
+        uint16_t directPort;
+        int dc = classifyDirectPort(argv[1], directPort);
+        if (dc == 1) {
+            printHeader();
+            int occ = checkSinglePort(directPort, false);
+            if (!occ) pauseForKey("退出");
+            PortChecker::cleanup();
+            return occ;
+        }
+        if (dc == 2) {
+            printError("无效的端口号: " + std::string(argv[1]) + " (范围 1-65535)");
+            PortChecker::cleanup();
+            return 2;
+        }
         int rc = runCli(argc, argv);
         PortChecker::cleanup();
         return rc;
@@ -1236,6 +1353,8 @@ int main(int argc, char* argv[]) {
             printInfo("卸载: port --uninstall-path");
         }
     }
+    // 注册/刷新 port: URI 协议（exe 移动位置后自动指向新路径）
+    registerPortProtocol();
 
     while (true) {
         printHeader();

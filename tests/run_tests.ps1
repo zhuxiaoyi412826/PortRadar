@@ -74,6 +74,23 @@ Check "-a 找到可用端口退出码为 0" ($LASTEXITCODE -eq 0)
 & $exe --no-such-option 2>&1 | Out-Null
 Check "未知选项退出码为 2" ($LASTEXITCODE -eq 2)
 
+# port: URI 形式（无效端口 → 落入未知选项分支）
+& $exe port:abc 2>&1 | Out-Null
+Check "port:abc 非法端口退出码为 2" ($LASTEXITCODE -eq 2)
+
+& $exe port:99999 2>&1 | Out-Null
+Check "port:99999 超出范围退出码为 2" ($LASTEXITCODE -eq 2)
+
+# 裸端口号直接检测形式（无效值，有效值为交互模式不在此测）
+& $exe 99999 2>&1 | Out-Null
+Check "port 99999 超出范围退出码为 2" ($LASTEXITCODE -eq 2)
+
+& $exe 0 2>&1 | Out-Null
+Check "port 0 退出码为 2" ($LASTEXITCODE -eq 2)
+
+& $exe abc 2>&1 | Out-Null
+Check "port abc 未知选项退出码为 2" ($LASTEXITCODE -eq 2)
+
 # PATH 安装 / 卸载
 $exeDir = (Get-Item $exe).DirectoryName
 $before = GetUserPath
@@ -84,6 +101,10 @@ Check "--install-path 退出码为 0" ($LASTEXITCODE -eq 0)
 
 $after = GetUserPath
 Check "--install-path 后 PATH 包含程序目录" ("$after" -like "*$exeDir*")
+
+# port: 协议随 --install-path 一并注册
+$protoCmd = (Get-ItemProperty -Path "HKCU:\Software\Classes\port\shell\open\command" -ErrorAction SilentlyContinue).'(default)'
+Check "--install-path 注册 port: 协议指向 port.exe" ($protoCmd -like "*port.exe*")
 
 # 重复安装不产生重复项
 & $exe --install-path | Out-Null
@@ -98,6 +119,8 @@ if (-not $hadDir) {
     Check "--uninstall-path 退出码为 0" ($LASTEXITCODE -eq 0)
     $final = GetUserPath
     Check "--uninstall-path 后 PATH 已移除程序目录" ("$final" -notlike "*$exeDir*")
+    $protoGone = ($null -eq (Get-Item "HKCU:\Software\Classes\port" -ErrorAction SilentlyContinue))
+    Check "--uninstall-path 注销 port: 协议" $protoGone
 } else {
     Check "--uninstall-path 跳过（目录原本已在 PATH，避免破坏用户环境）" $true
 }

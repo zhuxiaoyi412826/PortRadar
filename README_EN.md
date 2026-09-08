@@ -11,12 +11,25 @@ A lightweight Windows port occupancy checker. Enter a port number to instantly s
 
 ## Demo
 
+**`port:<port>` instant check** (type it into the Win+R Run dialog or the browser address bar — a check window pops up):
+
+```text
+port:8001
+
+  [TCP] Port 8001 is OCCUPIED
+    Process: python.exe
+    PID:     28712
+    Path:    C:\...\Python313\python.exe
+
+  Press [K] to terminate the occupying process (free the port), Enter/Space to quit
+```
+
 **Interactive menu** (double-click, or run without arguments):
 
 ```text
     +-------------------------------------------------------+
     |                                                       |
-    |    PortLens v0.4.0 - Port Occupancy Checker           |
+    |    PortLens v0.5.0 - Port Occupancy Checker           |
     |                                                       |
     +-------------------------------------------------------+
 
@@ -51,18 +64,21 @@ Available port: 5001 (2nd port starting from 5000)
 
 > Note: the program UI is in Chinese; the examples above are translated for illustration.
 
-## Installing the `port` command
+## Installing the `port` command and the `port:` protocol
 
-**Just double-click the exe once**: on first launch it automatically adds its own folder to the user PATH (no administrator rights required). Open a new CMD window afterwards, and `port` works from any directory.
+**Just double-click the exe once**: on first launch it automatically adds its own folder to the user PATH (no administrator rights required) and registers the `port:` URI protocol. Afterwards:
+
+- Open a new CMD window and `port` works from any directory
+- **Type `port:8001` directly into the Win+R Run dialog, the browser address bar, or Start-menu search** to pop up an instant check window — process name, PID and file path, with a one-key `K` release, no CMD needed
 
 Manual management is also available:
 
 ```bat
-port --install-path      :: add to user PATH
-port --uninstall-path    :: remove from user PATH
+port --install-path      :: add to user PATH + register port: protocol
+port --uninstall-path    :: remove from user PATH + unregister protocol
 ```
 
-Notes: already-open CMD windows won't see the change — open a new one; only the current user's PATH is modified, leaving the system and other accounts untouched.
+Notes: already-open CMD windows won't see the change — open a new one; only the current user's PATH is modified, leaving the system and other accounts untouched; if you move the exe, just double-click it once to refresh the protocol registration.
 
 ## Features
 
@@ -89,6 +105,7 @@ Notes: already-open CMD windows won't see the change — open a new one; only th
 
 | Option | Description |
 |--------|-------------|
+| `port:<port>` | Instant check (e.g. `port port:8001`; type `port:8001` in Win+R / the browser address bar — shows occupancy details with the K-key release) |
 | `-c <port>` | Check a single port (TCP+UDP) |
 | `-l [proto]` | List all listening ports (`tcp` / `udp` / `all`, default `all`) |
 | `-f <name>` | Find ports by process name (partial match, case-insensitive) |
@@ -102,6 +119,9 @@ Notes: already-open CMD windows won't see the change — open a new one; only th
 Exit codes (script friendly): `0` = port free / success, `1` = port occupied / no result, `2` = invalid arguments or runtime error.
 
 ```bat
+:: Quick check in CMD (shows process details when occupied, K to release)
+port 8001
+
 :: Who is using port 3306?
 port -c 3306
 
@@ -158,7 +178,7 @@ The `-static` flags produce a single self-contained exe that runs on any Windows
 .\tests\run_tests.ps1
 ```
 
-The smoke suite covers version output, every CLI option, PATH install/uninstall, and the exit-code contract (16 assertions). CI runs the same build and tests on every push / PR; pushing a `v*` tag automatically builds and attaches the exe to a GitHub Release.
+The smoke suite covers version output, every CLI option, the `port:` form, PATH / protocol install/uninstall, and the exit-code contract (18 assertions). CI runs the same build and tests on every push / PR; pushing a `v*` tag automatically builds and attaches the exe to a GitHub Release.
 
 ## Project Layout
 
