@@ -13,7 +13,7 @@
 #include "process_manager.h"
 
 // 版本号（同步更新 version.rc）
-#define PORTLENS_VERSION "0.5.0"
+#define PORTLENS_VERSION "0.6.0"
 
 // ========== 输入工具函数（全部用 _getch，避免 cin 缓冲问题） ==========
 
@@ -103,6 +103,32 @@ static std::string readString(const char* prompt, int maxLen = 64) {
 static std::string toLowerStr(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), ::tolower);
     return s;
+}
+
+// 是否系统关键进程（误杀会导致系统不稳定，删除操作需跳过）
+static bool isCriticalSystemProcess(const std::string& procName) {
+    std::string ln = toLowerStr(procName);
+    return ln.find("svchost") != std::string::npos ||
+           ln.find("lsass") != std::string::npos ||
+           ln.find("csrss") != std::string::npos ||
+           ln.find("services") != std::string::npos ||
+           ln.find("wininit") != std::string::npos ||
+           ln.find("winlogon") != std::string::npos ||
+           ln.find("smss") != std::string::npos ||
+           ln == "system";
+}
+
+// 结束单个进程并输出结果（系统关键进程自动跳过）
+static void killOneProcess(uint32_t pid, const std::string& procName) {
+    if (isCriticalSystemProcess(procName)) {
+        printWarning("已跳过系统关键进程 " + procName + " (PID " + std::to_string(pid) + ")，结束它可能导致系统不稳定");
+        return;
+    }
+    if (ProcessManager::killProcess(pid)) {
+        printSuccess("已结束 " + procName + " (PID " + std::to_string(pid) + ")，其监听端口已释放");
+    } else {
+        printError("结束 " + procName + " (PID " + std::to_string(pid) + ") 失败（可能权限不足）");
+    }
 }
 
 // UTF-8 转 UTF-16
@@ -414,24 +440,7 @@ int checkSinglePort(int presetPort = -1, bool fromMenu = true) {
         if (ch == 'k' || ch == 'K') {
             std::cout << "\n";
             for (uint32_t pid : pids) {
-                std::string procName = ProcessManager::getProcessName(pid);
-                std::string ln = toLowerStr(procName);
-                if (ln.find("svchost") != std::string::npos ||
-                    ln.find("lsass") != std::string::npos ||
-                    ln.find("csrss") != std::string::npos ||
-                    ln.find("services") != std::string::npos ||
-                    ln.find("wininit") != std::string::npos ||
-                    ln.find("winlogon") != std::string::npos ||
-                    ln.find("smss") != std::string::npos ||
-                    ln == "system") {
-                    printWarning("已跳过系统关键进程 " + procName + " (PID " + std::to_string(pid) + ")，结束它可能导致系统不稳定");
-                    continue;
-                }
-                if (ProcessManager::killProcess(pid)) {
-                    printSuccess("已结束 " + procName + " (PID " + std::to_string(pid) + ")，端口 " + std::to_string(port) + " 已释放");
-                } else {
-                    printError("结束 " + procName + " (PID " + std::to_string(pid) + ") 失败（可能权限不足）");
-                }
+                killOneProcess(pid, ProcessManager::getProcessName(pid));
             }
             pauseForKey(fromMenu ? "返回菜单" : "退出");
             return 1;
@@ -1048,6 +1057,25 @@ static int classifyDirectPort(const char* s, uint16_t& out) {
     return 1;
 }
 
+// 判定参数是否为进程名形式（用于 port java 直达检测）:
+// 非 '-' 开头（选项）、必须含字母、只含字母数字 . _ 空格
+static bool isProcessNameForm(const char* s) {
+    if (!s || !*s) return false;
+    if (s[0] == '-') return false;
+    bool hasAlpha = false;
+    for (const char* p = s; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (isalpha(c)) {
+            hasAlpha = true;
+        } else if (isdigit(c) || c == '.' || c == '_' || c == ' ') {
+            ;
+        } else {
+            return false;
+        }
+    }
+    return hasAlpha;
+}
+
 // 注册 port: 协议到当前用户。
 // 注册后 Win+R / 浏览器地址栏 / 开始菜单搜索 输入 port:8001 可直接启动检测
 static bool registerPortProtocol() {
@@ -1105,6 +1133,7 @@ static void printCliHelp() {
     printf("PortLens v%s - Windows 端口占用检测工具\n\n", PORTLENS_VERSION);
     printf("用法: port [选项]  （已安装到 PATH 后任意目录可用）\n\n");
     printf("  port <端口>     直接检测端口（如 port 80），显示详情，按 K 释放端口\n");
+    printf("  port <进程名>   按进程名查相关端口（如 port java），按编号/K 结束进程\n");
     printf("  port:<端口>     直达检测（如 port:8001，Win+R / 浏览器地址栏直接输入）\n");
     printf("  （无参数）      启动交互式菜单\n");
     printf("  -c <端口>      检测单个端口 (TCP+UDP)\n");
@@ -1152,6 +1181,133 @@ static int cliList(const std::string& protocol) {
     });
     printPortTable(ports);
     return ports.empty() ? 1 : 0;
+}
+
+// 直接按进程名检测: port java → 列出进程名包含 java 的所有进程及其监听端口（按进程分组编号）。
+// 交互: K 结束全部进程（跳过系统关键进程）、数字编号结束对应进程、回车/空格退出；每次删除后刷新列表。
+// 返回 0=找到相关进程，1=无匹配
+static int checkByProcessName(const std::string& name) {
+    std::string lowerQuery = toLowerStr(name);
+
+    struct ProcEntry {
+        uint32_t pid;
+        std::string name;
+        std::string path;
+        std::string portList;
+        int portCount;
+    };
+
+    bool firstRound = true;
+    while (true) {
+        auto ports = PortChecker::getAllListeningPorts("ALL");
+
+        std::vector<ProcEntry> entries;
+        int totalPorts = 0;
+        for (const auto& p : ports) {
+            if (p.pid == 0) continue;
+            std::string pname = ProcessManager::getProcessName(p.pid);
+            if (toLowerStr(pname).find(lowerQuery) == std::string::npos) continue;
+
+            std::string item = p.protocol + ":" + std::to_string(p.port);
+            ProcEntry* found = NULL;
+            for (auto& e : entries) {
+                if (e.pid == p.pid) { found = &e; break; }
+            }
+            if (found) {
+                found->portList += ", " + item;
+                found->portCount++;
+            } else {
+                ProcEntry e;
+                e.pid = p.pid;
+                e.name = pname;
+                e.path = ProcessManager::getProcessPath(p.pid);
+                e.portList = item;
+                e.portCount = 1;
+                entries.push_back(e);
+            }
+            totalPorts++;
+        }
+
+        if (entries.empty()) {
+            if (firstRound) {
+                printInfo("没有找到进程名包含 '" + name + "' 的端口占用");
+                return 1;
+            }
+            printSuccess("进程名包含 '" + name + "' 的占用已全部结束");
+            pauseForKey("退出");
+            return 0;
+        }
+        firstRound = false;
+
+        std::cout << "\n  进程名包含 \"" << name << "\" 的端口占用 (共 " << entries.size()
+                  << " 个进程, " << totalPorts << " 个监听端口):\n\n";
+        for (size_t i = 0; i < entries.size(); i++) {
+            const ProcEntry& e = entries[i];
+            setColor(GREEN);
+            printf("  [%d] ", (int)(i + 1));
+            setColor(YELLOW);
+            printf("%s", e.name.c_str());
+            restoreColor();
+            printf("  (PID: %d)\n", e.pid);
+            if (!e.path.empty()) {
+                printf("      路径: "); setColor(CYAN); printf("%s\n", e.path.c_str()); restoreColor();
+            }
+            printf("      端口: "); setColor(YELLOW); printf("%s\n", e.portList.c_str()); restoreColor();
+            std::cout << "\n";
+        }
+
+        setColor(YELLOW);
+        std::cout << "  按 [K] 结束全部进程，按 [编号] 结束对应进程，按 回车/空格 退出\n";
+        restoreColor();
+        std::cout.flush();
+
+        int ch = _getch();
+        if (ch == '\r' || ch == ' ' || ch == '\n' || ch == 27) {
+            return 0;
+        }
+        if (ch == 'k' || ch == 'K') {
+            std::cout << "\n";
+            for (const auto& e : entries) {
+                killOneProcess(e.pid, e.name);
+            }
+            Sleep(300);  // 等待端口释放后刷新列表
+            continue;
+        }
+        if (ch >= '1' && ch <= '9') {
+            // 编号输入: 首键后等 600ms，期间继续按键则视为多位编号（最多 2 位）
+            std::string num(1, (char)ch);
+            std::cout << (char)ch;
+            std::cout.flush();
+            while (num.size() < 2) {
+                bool more = false;
+                for (int t = 0; t < 60; t++) {
+                    if (_kbhit()) { more = true; break; }
+                    Sleep(10);
+                }
+                if (!more) break;
+                int c2 = _getch();
+                if (c2 >= '0' && c2 <= '9') {
+                    num += (char)c2;
+                    std::cout << (char)c2;
+                    std::cout.flush();
+                } else {
+                    break;
+                }
+            }
+            std::cout << std::endl;
+            int idx = atoi(num.c_str());
+            if (idx < 1 || idx > (int)entries.size()) {
+                printError("无效编号: " + num + " (范围 1-" + std::to_string(entries.size()) + ")");
+                Sleep(800);
+                continue;
+            }
+            const ProcEntry& e = entries[idx - 1];
+            killOneProcess(e.pid, e.name);
+            Sleep(300);
+            continue;
+        }
+        // 其他按键忽略，重新等待
+    }
 }
 
 static int cliFindByProcess(const std::string& name) {
@@ -1339,6 +1495,13 @@ int main(int argc, char* argv[]) {
             printError("无效的端口号: " + std::string(argv[1]) + " (范围 1-65535)");
             PortChecker::cleanup();
             return 2;
+        }
+        // 进程名直达: port java → 列出相关进程及其端口，支持编号/K 删除
+        if (isProcessNameForm(argv[1])) {
+            printHeader();
+            int rc = checkByProcessName(argv[1]);
+            PortChecker::cleanup();
+            return rc;
         }
         int rc = runCli(argc, argv);
         PortChecker::cleanup();

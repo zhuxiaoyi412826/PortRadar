@@ -24,12 +24,30 @@ port:8001
   Press [K] to terminate the occupying process (free the port), Enter/Space to quit
 ```
 
+**`port <process name>` batch management** (type `port python` in CMD — lists every matching process with its ports, kill by number or all at once):
+
+```text
+> port python
+
+  Processes matching "python" (2 processes, 2 listening ports):
+
+  [1] python.exe  (PID: 21600)
+      Path:  C:\...\Python313\python.exe
+      Ports: TCP:54333
+
+  [2] python.exe  (PID: 1084)
+      Path:  C:\...\Python313\python.exe
+      Ports: TCP:54334
+
+  Press [K] to terminate all, [number] to terminate one, Enter/Space to quit
+```
+
 **Interactive menu** (double-click, or run without arguments):
 
 ```text
     +-------------------------------------------------------+
     |                                                       |
-    |    PortLens v0.5.0 - Port Occupancy Checker           |
+    |    PortLens v0.6.0 - Port Occupancy Checker           |
     |                                                       |
     +-------------------------------------------------------+
 
@@ -105,7 +123,10 @@ Notes: already-open CMD windows won't see the change — open a new one; only th
 
 | Option | Description |
 |--------|-------------|
-| `port:<port>` | Instant check (e.g. `port port:8001`; type `port:8001` in Win+R / the browser address bar — shows occupancy details with the K-key release) |
+| `port <port>` | Instant check in CMD (e.g. `port 8001`) — shows process name, PID and path, with the K-key release |
+| `port <name>` | Instant batch management in CMD (e.g. `port java`): lists every process whose name matches, with its listening ports; `K` terminates all, a number terminates that one, the list refreshes after each kill |
+| `port :<port>` | Same as `port <port>`, colon form (e.g. `port :8001`) |
+| `port:<port>` | URI form: type `port:8001` into Win+R / the browser address bar / Start-menu search to pop a check window. CMD cannot execute this form (Windows rejects the syntax) — use `port 8001` there |
 | `-c <port>` | Check a single port (TCP+UDP) |
 | `-l [proto]` | List all listening ports (`tcp` / `udp` / `all`, default `all`) |
 | `-f <name>` | Find ports by process name (partial match, case-insensitive) |
@@ -121,6 +142,9 @@ Exit codes (script friendly): `0` = port free / success, `1` = port occupied / n
 ```bat
 :: Quick check in CMD (shows process details when occupied, K to release)
 port 8001
+
+:: List all java-related processes with their ports, kill by number or K for all
+port java
 
 :: Who is using port 3306?
 port -c 3306
@@ -178,7 +202,7 @@ The `-static` flags produce a single self-contained exe that runs on any Windows
 .\tests\run_tests.ps1
 ```
 
-The smoke suite covers version output, every CLI option, the `port:` form, PATH / protocol install/uninstall, and the exit-code contract (18 assertions). CI runs the same build and tests on every push / PR; pushing a `v*` tag automatically builds and attaches the exe to a GitHub Release.
+The smoke suite covers version output, every CLI option, the `port:` form, process-name instant lookup, PATH / protocol install/uninstall, and the exit-code contract (22 assertions). CI runs the same build and tests on every push / PR; pushing a `v*` tag automatically builds and attaches the exe to a GitHub Release.
 
 ## Project Layout
 
