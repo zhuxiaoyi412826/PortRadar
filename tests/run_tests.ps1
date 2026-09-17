@@ -88,8 +88,12 @@ Check "port 99999 超出范围退出码为 2" ($LASTEXITCODE -eq 2)
 & $exe 0 2>&1 | Out-Null
 Check "port 0 退出码为 2" ($LASTEXITCODE -eq 2)
 
+# 进程名直达检测（无匹配 → 退出码 1，与 -f 一致；有效匹配为交互模式不在此测）
+& $exe zqxnosuchproc 2>&1 | Out-Null
+Check "port zqxnosuchproc 无匹配退出码为 1" ($LASTEXITCODE -eq 1)
+
 & $exe abc 2>&1 | Out-Null
-Check "port abc 未知选项退出码为 2" ($LASTEXITCODE -eq 2)
+Check "port abc 无匹配退出码为 1" ($LASTEXITCODE -eq 1)
 
 # PATH 安装 / 卸载
 $exeDir = (Get-Item $exe).DirectoryName
