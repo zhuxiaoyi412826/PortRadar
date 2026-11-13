@@ -7,6 +7,15 @@
 *.a
 *.res
 
+# GUI (Tauri / Rust) build outputs
+gui/src-tauri/target/
+dist/
+
+# Runtime files (generated on first run)
+port.conf
+ports_*.csv
+ports_*.json
+
 # IDE / editor
 .vscode/
 .idea/

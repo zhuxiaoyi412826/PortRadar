@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PortLens - 端口地图</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <!-- 侧边栏 -->
+  <aside class="sidebar">
+    <div class="logo">
+      <span class="logo-mark">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="7" stroke="currentColor" stroke-width="1.8"/>
+          <circle cx="12" cy="12" r="2.4" fill="currentColor"/>
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="logo-text"><strong>PortLens</strong><small>端口管理工具</small></span>
+    </div>
+    <nav class="nav">
+      <a class="nav-item active" data-action="page" data-page="map" title="端口地图">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="4" width="7" height="6" rx="1.5" stroke="currentColor" stroke-width="1.7"/><rect x="14" y="14" width="7" height="6" rx="1.5" stroke="currentColor" stroke-width="1.7"/><path d="M10 7h5a2 2 0 0 1 2 2v5" stroke="currentColor" stroke-width="1.7"/></svg>
+        <span class="nav-label">端口地图</span>
+      </a>
+      <a class="nav-item" data-action="page" data-page="list" title="端口列表">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="4" cy="6" r="1.2" fill="currentColor"/><circle cx="4" cy="12" r="1.2" fill="currentColor"/><circle cx="4" cy="18" r="1.2" fill="currentColor"/></svg>
+        <span class="nav-label">端口列表</span>
+      </a>
+      <a class="nav-item" data-action="page" data-page="detect" title="端口检测">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.7"/><path d="m16 16 5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        <span class="nav-label">端口检测</span>
+      </a>
+      <a class="nav-item" data-action="page" data-page="monitor" title="监控时间轴">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 12h4l2.5-6 4 12 2.5-6H21" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="nav-label">监控时间轴</span>
+      </a>
+      <a class="nav-item" data-action="page" data-page="fav" title="收藏夹">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 2.7 5.5 6 .9-4.35 4.25 1.03 6-5.38-2.83-5.38 2.83 1.03-6L3.3 9.4l6-.9z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        <span class="nav-label">收藏夹</span>
+      </a>
+      <a class="nav-item" data-action="page" data-page="history" title="历史记录">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.7"/><path d="M12 7v5l3.5 2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        <span class="nav-label">历史记录</span>
+      </a>
+      <a class="nav-item" data-action="page" data-page="settings" title="设置">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 6h8M18 6h2M4 12h3M11 12h9M4 18h10M20 18h0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="15" cy="6" r="2.2" stroke="currentColor" stroke-width="1.7"/><circle cx="8" cy="12" r="2.2" stroke="currentColor" stroke-width="1.7"/><circle cx="17" cy="18" r="2.2" stroke="currentColor" stroke-width="1.7"/></svg>
+        <span class="nav-label">设置</span>
+      </a>
+    </nav>
+    <div class="side-foot">
+      <span class="live-dot"></span>
+      <span class="foot-label">v<b id="appVersion">—</b></span>
+    </div>
+  </aside>
+
+  <!-- 主区域 -->
+  <main class="main">
+    <header class="toolbar">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.7"/><path d="m16 16 5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        <input id="globalSearch" type="search" placeholder="搜索端口 / 进程 / 别名，回车检测" autocomplete="off" spellcheck="false">
+        <kbd>Enter</kbd>
+      </div>
+      <div class="seg" id="protoSeg">
+        <button data-action="proto" data-proto="0">TCP</button>
+        <button data-action="proto" data-proto="1">UDP</button>
+        <button class="active" data-action="proto" data-proto="2">全部</button>
+      </div>
+      <button class="btn icon-btn" data-action="refresh" id="refreshBtn" title="刷新数据 (Ctrl+R)">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M20 4v7h-7" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <label class="switch-wrap" title="按配置间隔自动刷新">
+        <span class="switch"><input type="checkbox" id="autoRefresh"><i></i></span>
+        <span class="switch-text">自动刷新</span>
+      </label>
+      <span class="badge preview-badge" id="previewBadge" hidden>预览模式</span>
+    </header>
+
+    <div class="content" id="content">
+      <!-- 页面 1：端口地图 -->
+      <section class="page active" id="page-map">
+        <div class="page-head">
+          <div><h1>端口地图</h1><p>以进程为中心查看本机监听端口与容器环境</p></div>
+        </div>
+        <div class="stats" id="mapStats"></div>
+        <div class="map-board" id="mapBoard"></div>
+      </section>
+
+      <!-- 页面 2：端口列表 -->
+      <section class="page" id="page-list">
+        <div class="page-head">
+          <div><h1>端口列表</h1><p>排序、批量选择并释放占用的端口</p></div>
+        </div>
+        <div class="panel">
+          <div class="panel-bar">
+            <span class="sel-info">已选 <b id="selCount">0</b> 项</span>
+            <button class="btn small danger-ghost" data-action="batch-kill" id="batchKillBtn" disabled>批量释放</button>
+            <span class="bar-sep"></span>
+            <button class="btn small ghost" data-action="export" data-fmt="0">导出 CSV</button>
+            <button class="btn small ghost" data-action="export" data-fmt="1">导出 JSON</button>
+            <span class="bar-meta" id="listMeta"></span>
+          </div>
+          <div id="listWrap"></div>
+        </div>
+      </section>
+
+      <!-- 页面 3：端口检测 -->
+      <section class="page" id="page-detect">
+        <div class="page-head">
+          <div><h1>端口检测</h1><p>输入端口号或别名，检查 TCP / UDP 占用详情</p></div>
+        </div>
+        <div class="panel detect-bar">
+          <div class="input-row">
+            <input id="detectInput" class="text-input" placeholder="输入端口号或别名，如 8080 / mysql" autocomplete="off">
+            <button class="btn primary" data-action="detect">开始检测</button>
+          </div>
+          <div class="chips alias-chips" id="aliasChips"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">自动寻找可用端口</div>
+          <div class="input-row">
+            <input id="freePortInput" class="text-input small-width" type="number" min="1" max="65535" value="8000">
+            <button class="btn" data-action="find-free">查找</button>
+            <span class="free-result" id="freePortResult"></span>
+          </div>
+        </div>
+        <div id="detectResult"></div>
+      </section>
+
+      <!-- 页面 4：监控时间轴 -->
+      <section class="page" id="page-monitor">
+        <div class="page-head">
+          <div><h1>监控时间轴</h1><p>持续观察端口状态变化，记录占用与释放事件</p></div>
+          <button class="btn small ghost" data-action="clear-monitor">清空事件</button>
+        </div>
+        <div class="flash-bar" id="monitorFlash"></div>
+        <div class="panel">
+          <div class="input-row">
+            <input id="monitorInput" class="text-input" placeholder="输入要监控的端口号，如 5173" autocomplete="off">
+            <button class="btn primary" data-action="add-monitor">添加监控</button>
+          </div>
+          <div class="chips" id="monitorFavChips"></div>
+          <div class="chips monitor-chips" id="monitorChips"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title">状态事件 <span class="muted" id="monitorCount"></span></div>
+          <div class="timeline" id="monitorEvents"></div>
+        </div>
+      </section>
+
+      <!-- 页面 5：收藏夹 -->
+      <section class="page" id="page-fav">
+        <div class="page-head">
+          <div><h1>收藏夹</h1><p>把常用端口固定在视线范围内</p></div>
+          <button class="btn small ghost" data-action="page" data-page="list">去端口列表</button>
+        </div>
+        <div class="fav-grid" id="favGrid"></div>
+      </section>
+
+      <!-- 页面 6：历史记录 -->
+      <section class="page" id="page-history">
+        <div class="page-head">
+          <div><h1>历史记录</h1><p>记录通过 PortLens 释放过的进程与端口</p></div>
+          <button class="btn small danger-ghost" data-action="clear-history">清空历史</button>
+        </div>
+        <div class="panel" id="historyWrap"></div>
+      </section>
+
+      <!-- 页面 7：设置 -->
+      <section class="page" id="page-settings">
+        <div class="page-head">
+          <div><h1>设置</h1><p>运行环境、配置与维护操作</p></div>
+        </div>
+        <div id="settingsBody"></div>
+      </section>
+    </div>
+
+    <!-- 加载遮罩 -->
+    <div class="loading-overlay" id="loadingOverlay">
+      <span class="spinner"></span><span id="loadingText">加载中…</span>
+    </div>
+  </main>
+</div>
+
+<!-- 右侧详情抽屉 -->
+<div class="drawer-mask" id="drawerMask" data-action="close-drawer"></div>
+<aside class="drawer" id="drawer">
+  <div class="drawer-head">
+    <div class="drawer-title-wrap">
+      <h2 id="drawerTitle">端口详情</h2>
+      <p id="drawerSub"></p>
+    </div>
+    <button class="btn icon-btn" data-action="close-drawer" title="关闭">✕</button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
+
+<!-- 居中确认弹窗 -->
+<div class="modal-mask" id="modalMask">
+  <div class="modal" role="dialog" aria-modal="true">
+    <h3 id="modalTitle"></h3>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-actions" id="modalActions"></div>
+  </div>
+</div>
+
+<!-- 通知 -->
+<div class="toasts" id="toasts"></div>
+<script src="app.js"></script>
+</body>
+</html>

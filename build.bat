@@ -41,7 +41,7 @@ echo.
 
 if exist port.exe del /q port.exe
 
-g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ main.cpp port_checker.cpp process_manager.cpp version.res -o port.exe -lws2_32 -liphlpapi -lpsapi -lversion -lshell32 -mconsole
+g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ main.cpp port_checker.cpp process_manager.cpp config_manager.cpp special_process.cpp watch_tray.cpp version.res -o port.exe -lws2_32 -liphlpapi -lpsapi -lversion -lshell32 -luser32 -lgdi32 -mconsole
 
 if %errorlevel% neq 0 (
     echo.
