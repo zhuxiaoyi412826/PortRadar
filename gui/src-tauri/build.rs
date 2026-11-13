@@ -22,15 +22,22 @@ fn main() {
         println!("cargo:rustc-link-lib={}", lib);
     }
     println!("cargo:rustc-link-arg=-static-libgcc");
-    println!("cargo:rustc-link-arg=-l:libstdc++.a");
-    // rustc 使用 -nodefaultlibs，需补回 MinGW 运行时库
-    println!("cargo:rustc-link-arg=-lmingwex");
-    println!("cargo:rustc-link-arg=-lmingw32");
-    println!("cargo:rustc-link-arg=-l:libwinpthread.a");
-    println!("cargo:rustc-link-arg=-lgcc");
-    println!("cargo:rustc-link-arg=-lgcc_eh");
-    println!("cargo:rustc-link-arg=-lkernel32");
-    println!("cargo:rustc-link-arg=-lmsvcrt");
+    // rustc 使用 -nodefaultlibs，需补回 MinGW 运行时库；
+    // 用 --start-group 包住，避免不同 GCC 版本下静态库依赖顺序不同导致未定义符号
+    println!("cargo:rustc-link-arg=-Wl,--start-group");
+    for arg in [
+        "-l:libstdc++.a",
+        "-l:libwinpthread.a",
+        "-lmingwex",
+        "-lmingw32",
+        "-lgcc",
+        "-lgcc_eh",
+        "-lmsvcrt",
+        "-lkernel32",
+    ] {
+        println!("cargo:rustc-link-arg={}", arg);
+    }
+    println!("cargo:rustc-link-arg=-Wl,--end-group");
 
     // C++ 源码变更时重新编译
     for f in [
