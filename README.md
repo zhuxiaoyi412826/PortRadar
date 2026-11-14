@@ -17,7 +17,7 @@
 port:8001
 
     +-------------------------------------------------------+
-    |    PortLens v0.7.0 - 端口占用检测工具                 |
+    |    PortLens v0.8.1 - 端口占用检测工具                 |
     +-------------------------------------------------------+
 
   正在检测端口 8001 ...
@@ -53,7 +53,7 @@ port:8001
 ```text
     +-------------------------------------------------------+
     |                                                       |
-    |    PortLens v0.7.0 - 端口占用检测工具                 |
+    |    PortLens v0.8.1 - 端口占用检测工具                 |
     |                                                       |
     +-------------------------------------------------------+
 
@@ -133,8 +133,14 @@ port --uninstall-path    :: 从用户 PATH 移除 + 注销 port: 协议
 
 ## 下载安装
 
-- 从 [Releases](../../releases) 页面下载 `port.exe`，双击即可运行（Windows 7 及以上，无需安装任何运行库）；双击一次即自动安装 `port` 命令，详见上文"安装 port 命令"
-- 或自行编译，见下文
+从 [Releases](../../releases) 页面下载，两个文件按需选择：
+
+| 文件 | 说明 |
+|------|------|
+| **port.exe** | 双模式主程序（推荐）：双击进入 GUI 桌面端，CMD 中执行 `port` 进入命令行；v0.8.1 起 `WebView2Loader` 已静态链接，单文件即可运行，无需附带 DLL（GUI 需 Windows 10/11 自带 WebView2 运行时） |
+| **port-cli.exe** | 纯命令行版：静态链接单文件、零依赖，适合服务器、Windows 7 等无 WebView2 运行时的环境 |
+
+下载后双击一次即自动安装 `port` 命令与 `port:` 协议，详见上文"安装 port 命令"；或自行编译，见下文。
 
 ## 使用说明
 
@@ -275,8 +281,8 @@ nginx=80
 
 ## 环境要求
 
-- **运行**：Windows 7 及以上，无需安装任何运行库
-- **编译**：MinGW-w64 GCC（需支持 C++17），如 [WinLibs](https://winlibs.com/) 或 MSYS2
+- **运行**：命令行模式 / `port-cli.exe` 支持 Windows 7 及以上，无需安装任何运行库；GUI 模式（`port.exe` 双击）需 Windows 10/11（系统自带 WebView2 运行时，v0.8.1 起加载器已静态链接，无需附带 DLL）
+- **编译**：MinGW-w64 GCC（需支持 C++17），如 [WinLibs](https://winlibs.com/) 或 MSYS2；GUI 另需 Rust 工具链（`x86_64-pc-windows-gnu`）
 
 ## 编译
 
@@ -320,7 +326,7 @@ g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ \
 .\tests\run_tests.ps1
 ```
 
-冒烟测试覆盖版本输出、各命令行参数、`port:` 形式、进程名直达、PATH / 协议安装卸载、退出码约定，以及 v0.7 的配置、收藏夹、导出、批量释放、历史、托盘等新命令（38 项断言）。CI 会在每次 push / PR 时自动执行构建与测试；推送 `v*` 标签会自动编译并把 exe 发布到 Release。
+冒烟测试覆盖版本输出、各命令行参数、`port:` 形式、进程名直达、PATH / 协议安装卸载、退出码约定、双模式判定（`--gui` / `--cli`），以及 v0.7 的配置、收藏夹、导出、批量释放、历史、托盘等新命令（41 项断言）。CI 会在每次 push / PR 时自动执行构建与测试；推送 `v*` 标签会自动编译并把 exe 发布到 Release。
 
 ## 项目结构
 
@@ -335,6 +341,8 @@ g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ \
 ├── gui/                   # 桌面端（Tauri 2）
 │   ├── src/               # 前端：index.html / styles.css / app.js
 │   └── src-tauri/         # Rust 入口（双模式判定、命令、托盘）与构建脚本
+│       ├── msvc_compat.cpp    # MSVC 运行时兼容符号（供静态 WebView2Loader 链接）
+│       └── webview2-static/   # WebView2Loader 静态存档（单文件分发关键）
 ├── build_gui.ps1          # 图形界面一键编译（输出 dist/）
 ├── console_util.h         # 控制台工具：颜色、清屏、格式化输出
 ├── version.rc             # exe 版本信息资源
@@ -347,6 +355,7 @@ g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ \
 
 - 全部基于 Windows 原生 API：`GetExtendedTcpTable` / `GetExtendedUdpTable`（端口表）、`psapi`（进程信息）、`ShellExecuteW`（定位文件）
 - 桌面端使用 Tauri 2（系统 WebView2，不使用 Qt / Electron），Rust 入口通过 `gui_api.cpp` 的 JSON 接口复用 C++ 内核，命令行与界面零逻辑重复
+- 单文件分发：`WebView2Loader` 以 NuGet 静态库（转 GNU 静态存档）静态链接进 exe，链接顺序上优先于 webview2-com-sys 的 DLL 导入库；MSVC 编译的静态库所需运行时符号由 `msvc_compat.cpp` 补齐（objcopy 重命名为 MSVC 修饰名后 `--whole-archive` 强制链接）
 - 双模式判定：无参数时看父进程（`explorer.exe` 即双击）与所在控制台进程数，GUI 模式下 `FreeConsole()` 隐藏黑窗；仍保留 console 子系统，保证 CMD 中输出与退出码正确
 - 按键输入统一走 `_getch()` 直读，无行缓冲残留问题，响应可靠
 - UTF-8 输出（65001 代码页）+ Win32 控制台颜色 API，无第三方依赖

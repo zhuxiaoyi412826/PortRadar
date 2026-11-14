@@ -47,7 +47,7 @@ port:8001
 ```text
     +-------------------------------------------------------+
     |                                                       |
-    |    PortLens v0.7.0 - Port Occupancy Checker           |
+    |    PortLens v0.8.1 - Port Occupancy Checker           |
     |                                                       |
     +-------------------------------------------------------+
 
@@ -125,8 +125,14 @@ Notes: already-open CMD windows won't see the change — open a new one; only th
 
 ## Download
 
-- Grab `port.exe` from the [Releases](../../releases) page — runs on Windows 7+ with no runtime dependencies; double-clicking once also installs the `port` command (see "Installing the `port` command" above)
-- Or build from source (see below)
+Grab the file that fits your environment from the [Releases](../../releases) page:
+
+| File | Description |
+|------|-------------|
+| **port.exe** | Dual-mode main program (recommended): double-click for the GUI desktop, run `port` in CMD for the CLI; since v0.8.1 the WebView2 loader is statically linked, so it is a true single file with no DLL beside it (the GUI needs the WebView2 runtime bundled with Windows 10/11) |
+| **port-cli.exe** | Pure CLI edition: statically linked single file with zero dependencies, for servers and Windows 7 machines without the WebView2 runtime |
+
+Double-clicking once also installs the `port` command and the `port:` protocol (see "Installing the `port` command" above); or build from source (see below).
 
 ## Usage
 
@@ -267,8 +273,8 @@ Favorites and history live in `%LOCALAPPDATA%\PortLens\` (`favorites.txt`, `hist
 
 ## Requirements
 
-- **Run**: Windows 7 or later, no runtime libraries needed
-- **Build**: MinGW-w64 GCC with C++17 support, e.g. [WinLibs](https://winlibs.com/) or MSYS2
+- **Run**: CLI mode / `port-cli.exe` works on Windows 7 or later with no runtime libraries; GUI mode (double-clicking `port.exe`) needs Windows 10/11 (system WebView2 runtime; since v0.8.1 the loader is statically linked, no DLL required)
+- **Build**: MinGW-w64 GCC with C++17 support, e.g. [WinLibs](https://winlibs.com/) or MSYS2; the GUI additionally needs a Rust toolchain (`x86_64-pc-windows-gnu`)
 
 ## Building
 
@@ -306,7 +312,7 @@ The script maps a space-free drive letter with `subst` (MinGW `windres` cannot h
 .\tests\run_tests.ps1
 ```
 
-The smoke suite covers version output, every CLI option, the `port:` form, process-name instant lookup, PATH / protocol install/uninstall, the exit-code contract, plus the v0.7 config, favorites, export, batch release, history and tray commands (38 assertions). CI runs the same build and tests on every push / PR; pushing a `v*` tag automatically builds and attaches the exe to a GitHub Release.
+The smoke suite covers version output, every CLI option, the `port:` form, process-name instant lookup, PATH / protocol install/uninstall, the exit-code contract, dual-mode routing (`--gui` / `--cli`), plus the v0.7 config, favorites, export, batch release, history and tray commands (41 assertions). CI runs the same build and tests on every push / PR; pushing a `v*` tag automatically builds and attaches the exe to a GitHub Release.
 
 ## Project Layout
 
@@ -321,6 +327,8 @@ The smoke suite covers version output, every CLI option, the `port:` form, proce
 ├── gui/                   # Desktop app (Tauri 2)
 │   ├── src/               # Frontend: index.html / styles.css / app.js
 │   └── src-tauri/         # Rust entry (mode routing, commands, tray)
+│       ├── msvc_compat.cpp    # MSVC runtime compat symbols (for the static WebView2 loader)
+│       └── webview2-static/   # WebView2Loader static archive (key to single-file shipping)
 ├── build_gui.ps1          # One-click GUI build (writes to dist/)
 ├── console_util.h         # Console utilities: colors, clear screen, formatting
 ├── version.rc             # Executable version resource
@@ -333,6 +341,7 @@ The smoke suite covers version output, every CLI option, the `port:` form, proce
 
 - Built entirely on native Windows APIs: `GetExtendedTcpTable` / `GetExtendedUdpTable` (port tables), `psapi` (process info), `ShellExecuteW` (reveal file location)
 - The desktop app uses Tauri 2 (system WebView2, no Qt or Electron); the Rust entry reuses the C++ core through JSON APIs in `gui_api.cpp`, so CLI and GUI share one implementation
+- Single-file shipping: the WebView2 loader is statically linked from the NuGet static library (converted to a GNU archive) and wins the link order over webview2-com-sys' DLL import library; the MSVC runtime symbols the static library needs are provided by `msvc_compat.cpp` (renamed to MSVC mangled names with objcopy, then force-linked via `--whole-archive`)
 - Dual-mode routing: with no arguments it inspects the parent process (`explorer.exe` means a double-click) and the console process count, then calls `FreeConsole()` to hide the console in GUI mode while keeping the console subsystem so CMD output and exit codes stay correct
 - All keyboard input goes through `_getch()` — no line-buffering artifacts, always responsive
 - UTF-8 output (code page 65001) + Win32 console color API; no third-party dependencies
