@@ -80,6 +80,8 @@ jobs:
           CXX: g++
         run: |
           $env:PATH = "C:\msys64\mingw64\bin;" + $env:PATH
+          # WebView2Loader 静态链接：静态存档目录优先于 DLL 导入库（路径无空格，RUSTFLAGS 安全）
+          $env:RUSTFLAGS = "-L native=$PWD\gui\src-tauri\webview2-static"
           cargo build --release --manifest-path gui\src-tauri\Cargo.toml
 
       - name: Smoke test (dual-mode exe)
@@ -93,18 +95,13 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item gui\src-tauri\target\release\port.exe dist\port.exe -Force
-          $loader = Get-ChildItem "$env:USERPROFILE\.cargo\registry\src\*\webview2-com-sys-*\x64\WebView2Loader.dll" |
-            Select-Object -First 1
-          if (-not $loader) { throw "WebView2Loader.dll not found in cargo registry" }
-          Copy-Item $loader.FullName dist\WebView2Loader.dll -Force
+          # WebView2Loader.dll 已内嵌进 exe（gui/src-tauri/WebView2Loader.dll），无需随包分发
 
       - name: Upload GUI artifact
         uses: actions/upload-artifact@v4
         with:
           name: PortLens-win64-gui
-          path: |
-            dist\port.exe
-            dist\WebView2Loader.dll
+          path: dist\port.exe
 
   # ---------- 打标签后统一发布，两个构建都通过才创建 Release ----------
   release:
@@ -122,3 +119,4 @@ jobs:
         with:
           files: artifacts/**/*
           fail_on_unmatched_files: true
+          generate_release_notes: true

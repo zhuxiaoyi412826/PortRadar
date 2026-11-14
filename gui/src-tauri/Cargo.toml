@@ -1,6 +1,6 @@
-[package]
+﻿[package]
 name = "portlens-gui"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2021"
 
 # 产物直接命名为 port.exe，与 CLI 单文件同名

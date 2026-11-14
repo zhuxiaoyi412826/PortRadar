@@ -1,4 +1,4 @@
-# PortLens GUI 构建脚本
+﻿# PortLens GUI 构建脚本
 # 说明：项目路径含空格时 MinGW windres 会失败，这里自动映射一个无空格盘符再编译
 param(
     [switch]$Clean
@@ -25,6 +25,8 @@ try {
     Push-Location $gui
     try {
         $env:CARGO_TERM_COLOR = 'never'
+        # WebView2Loader 静态链接：静态存档目录须优先于 webview2-com-sys 的 DLL 导入库
+        $env:RUSTFLAGS = "-L native=${drive}:\gui\src-tauri\webview2-static"
         if ($Clean) {
             Write-Host "[1/3] 清理..." -ForegroundColor Yellow
             cargo clean --manifest-path src-tauri\Cargo.toml
@@ -40,14 +42,8 @@ try {
         $exe = Join-Path $gui 'src-tauri\target\release\port.exe'
         Copy-Item $exe (Join-Path $out 'port.exe') -Force
 
-        # WebView2Loader.dll（Tauri 在 MinGW 下需要随程序分发）
-        $loader = Get-ChildItem "$env:USERPROFILE\.cargo\registry\src\*\webview2-com-sys-*\x64\WebView2Loader.dll" -ErrorAction SilentlyContinue |
-                  Select-Object -First 1
-        if ($loader) {
-            Copy-Item $loader.FullName (Join-Path $out 'WebView2Loader.dll') -Force
-        } else {
-            Write-Warning "未找到 WebView2Loader.dll，请从 webview2-com-sys 包中复制到 dist 目录"
-        }
+        # WebView2Loader 已静态链接进 exe，dist 只需单文件
+        Write-Host "WebView2Loader 已静态链接，单文件分发" -ForegroundColor DarkGray
 
         Write-Host "[3/3] 完成" -ForegroundColor Green
         Get-ChildItem $out | Select-Object Name, @{N='大小';E={ '{0:N2} MB' -f ($_.Length/1MB) }} | Format-Table

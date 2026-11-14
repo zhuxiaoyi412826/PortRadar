@@ -152,7 +152,7 @@ port --uninstall-path    :: 从用户 PATH 移除 + 注销 port: 协议
 
 图形界面包含七个页面：**端口地图**（端口 → 进程 → 容器连线图 + 统计）、**端口列表**（排序 / 搜索 / 勾选批量释放 / 导出 CSV、JSON）、**端口检测**（TCP+UDP 状态、进程详情、连接列表、别名快捷检测、查找可用端口）、**监控时间轴**（端口占用/释放事件记录 + 闪烁与提示音）、**收藏夹**、**历史记录**、**设置**。关闭窗口会最小化到系统托盘，托盘菜单可重新显示或退出。
 
-> GUI 版本依赖系统 WebView2 运行时（Windows 10/11 自带）；发布包中的 `WebView2Loader.dll` 需与 `port.exe` 放在同一目录。
+> GUI 版本依赖系统 WebView2 运行时（Windows 10/11 自带）；v0.8.1 起 `WebView2Loader` 已静态链接进 exe，单文件即可运行，无需附带 DLL。
 
 ### 命令行模式
 
@@ -308,11 +308,11 @@ g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ \
 需要 Rust 工具链（`x86_64-pc-windows-gnu`）与 Node（可选，仅当前端资源独立构建时需要，本项目前端为原生 HTML/CSS/JS，直接嵌入 exe）：
 
 ```powershell
-.\build_gui.ps1          # 输出 dist\port.exe + dist\WebView2Loader.dll
+.\build_gui.ps1          # 输出单文件 dist\port.exe
 .\build_gui.ps1 -Clean   # 先清理再编译
 ```
 
-脚本会自动用 `subst` 映射无空格盘符（MinGW 的 `windres` 不支持含空格路径），编译完成后把 Rust 产物与 `WebView2Loader.dll` 收集到 `dist\`。
+脚本会自动用 `subst` 映射无空格盘符（MinGW 的 `windres` 不支持含空格路径），编译完成后把单文件 `port.exe` 收集到 `dist\`（`WebView2Loader` 已静态链接，无需 DLL）。
 
 ## 测试
 

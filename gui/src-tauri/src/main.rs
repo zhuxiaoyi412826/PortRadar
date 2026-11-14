@@ -179,7 +179,7 @@ fn main() {
         std::process::exit(code);
     }
 
-    // GUI 模式：脱离控制台，初始化内核
+    // GUI 模式：脱离控制台，初始化内核（WebView2Loader 已静态链接，无需 DLL）
     unsafe {
         pl_free_console();
         pl_init();

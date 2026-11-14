@@ -144,7 +144,7 @@ The same `port.exe` picks a mode based on how it was started; both modes share t
 
 The GUI has seven pages: **Port Map** (port → process → container links plus counters), **Port List** (sort / search / multi-select release / export CSV, JSON), **Detect** (TCP+UDP state, process detail, connections, alias shortcuts, free-port finder), **Monitor Timeline** (occupy/release events with flash and beep), **Favorites**, **History** and **Settings**. Closing the window minimizes to the system tray; the tray menu restores or exits.
 
-> The GUI needs the system WebView2 runtime (bundled with Windows 10/11). Ship `WebView2Loader.dll` next to `port.exe`.
+> The GUI needs the system WebView2 runtime (bundled with Windows 10/11). Since v0.8.1 the WebView2 loader is statically linked into the exe — a single file, no DLL required.
 
 ### Command-line mode
 
@@ -294,11 +294,11 @@ The `-static` flags produce a single self-contained exe that runs on any Windows
 Requires a Rust toolchain (`x86_64-pc-windows-gnu`). The frontend is plain HTML/CSS/JS embedded into the exe, so no Node build step is needed:
 
 ```powershell
-.\build_gui.ps1          # produces dist\port.exe + dist\WebView2Loader.dll
+.\build_gui.ps1          # produces single-file dist\port.exe
 .\build_gui.ps1 -Clean   # clean and rebuild
 ```
 
-The script maps a space-free drive letter with `subst` (MinGW `windres` cannot handle paths containing spaces) and collects the Rust binary plus `WebView2Loader.dll` into `dist\`.
+The script maps a space-free drive letter with `subst` (MinGW `windres` cannot handle paths containing spaces) and collects the single-file Rust binary into `dist\` (the WebView2 loader is statically linked, no DLL needed).
 
 ## Testing
 

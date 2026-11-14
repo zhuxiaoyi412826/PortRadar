@@ -2,6 +2,15 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.8.1] - 2026-11-14
+
+### 变更
+
+- `WebView2Loader` 由 DLL 分发改为**静态链接**进 `port.exe`（NuGet `WebView2LoaderStatic.lib` 转 GNU 静态存档，链接时优先于 webview2-com-sys 的 DLL 导入库），GUI 版实现真正的单文件分发，exe 不再附带任何 DLL
+- 新增 `msvc_compat.cpp`：为 MSVC 编译的静态库补齐 MinGW 缺失的运行时符号（`/GS` 安全 cookie、`magic statics` 初始化、`nothrow new/delete`），通过 objcopy 重命名为 MSVC 修饰名后整体强制链接
+- Release 资产精简为 `port.exe`（双模式）与 `port-cli.exe`（纯命令行）两个文件
+- CI 链接参数改用 `-Wl,--start-group`，兼容 MSYS2 GCC 16 的静态库依赖顺序
+
 ## [0.8.0] - 2026-11-13
 
 ### 新增
