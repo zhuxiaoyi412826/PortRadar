@@ -1,9 +1,10 @@
-#include <iostream>
+﻿#include <iostream>
 #include <string>
 #include <vector>
 #include <algorithm>
 #include <cctype>
 #include <cwctype>
+#include <utility>
 #include <windows.h>
 #include <shellapi.h>
 #include <conio.h>
@@ -11,9 +12,12 @@
 #include "console_util.h"
 #include "port_checker.h"
 #include "process_manager.h"
+#include "config_manager.h"
+#include "special_process.h"
+#include "watch_tray.h"
 
 // 版本号（同步更新 version.rc）
-#define PORTLENS_VERSION "0.6.0"
+#define PORTLENS_VERSION "0.8.1"
 
 // ========== 输入工具函数（全部用 _getch，避免 cin 缓冲问题） ==========
 
@@ -119,16 +123,20 @@ static bool isCriticalSystemProcess(const std::string& procName) {
 }
 
 // 结束单个进程并输出结果（系统关键进程自动跳过）
-static void killOneProcess(uint32_t pid, const std::string& procName) {
+// portsText: 该进程涉及的端口，用于写入历史记录
+static bool killOneProcess(uint32_t pid, const std::string& procName,
+                           const std::string& portsText = "") {
     if (isCriticalSystemProcess(procName)) {
         printWarning("已跳过系统关键进程 " + procName + " (PID " + std::to_string(pid) + ")，结束它可能导致系统不稳定");
-        return;
+        return false;
     }
     if (ProcessManager::killProcess(pid)) {
         printSuccess("已结束 " + procName + " (PID " + std::to_string(pid) + ")，其监听端口已释放");
-    } else {
-        printError("结束 " + procName + " (PID " + std::to_string(pid) + ") 失败（可能权限不足）");
+        HistoryManager::record(pid, procName, ProcessManager::getProcessPath(pid), portsText);
+        return true;
     }
+    printError("结束 " + procName + " (PID " + std::to_string(pid) + ") 失败（可能权限不足）");
+    return false;
 }
 
 // UTF-8 转 UTF-16
@@ -193,6 +201,11 @@ PortDesc PORT_DESCS[] = {
 };
 
 std::string getPortDesc(int port) {
+    // 配置文件中的自定义说明优先
+    std::string custom = ConfigManager::getCustomPortDesc(port);
+    if (!custom.empty()) {
+        return "自定义 - " + custom;
+    }
     for (int i = 0; PORT_DESCS[i].name; i++) {
         if (PORT_DESCS[i].port == port) {
             return std::string(PORT_DESCS[i].name) + " - " + PORT_DESCS[i].desc;
@@ -273,9 +286,30 @@ void printMenu() {
     restoreColor();
     std::cout << "退出程序\n";
 
+    setColor(GREEN);
+    std::cout << "  [F] ";
+    restoreColor();
+    std::cout << "端口收藏夹（查看收藏端口状态）\n";
+
+    setColor(GREEN);
+    std::cout << "  [H] ";
+    restoreColor();
+    std::cout << "结束进程历史（误杀可追溯）\n";
+
+    setColor(GREEN);
+    std::cout << "  [W] ";
+    restoreColor();
+    std::cout << "定向端口监控（状态变化提醒）\n";
+
+    setColor(GREEN);
+    std::cout << "  [T] ";
+    restoreColor();
+    std::cout << "系统托盘常驻监控\n";
+
     setColor(DARK_GRAY);
     std::cout << "\n  提示: 直接输入端口号 (2 位以上) 可快速检测，如 8001\n";
     std::cout << "        Win+R 输入 port:端口号 可在任意界面直达检测，如 port:8001\n";
+    std::cout << "        port <进程名> 可批量管理，如 port java\n";
     restoreColor();
 
     printSeparator();
@@ -299,6 +333,9 @@ void printPortTable(const std::vector<PortInfo>& ports, bool showProcess = true)
         std::string procName = "未知";
         if (showProcess && p.pid > 0) {
             procName = ProcessManager::getProcessName(p.pid);
+            // 标注 Docker 容器 / WSL / 虚拟机来源
+            std::string tag = SpecialProcessDetector::detect(procName, p.port);
+            if (!tag.empty()) procName += " " + tag;
         }
 
         setColor(CYAN);
@@ -397,8 +434,9 @@ int checkSinglePort(int presetPort = -1, bool fromMenu = true) {
 
         std::string procName = ProcessManager::getProcessName(tcpInfo.pid);
         std::string procPath = ProcessManager::getProcessPath(tcpInfo.pid);
+        std::string tag = SpecialProcessDetector::detect(procName, port);
 
-        printf("    进程名: "); setColor(YELLOW); printf("%s\n", procName.c_str()); restoreColor();
+        printf("    进程名: "); setColor(YELLOW); printf("%s%s\n", procName.c_str(), tag.c_str()); restoreColor();
         printf("    PID:    "); setColor(YELLOW); printf("%d\n", tcpInfo.pid); restoreColor();
         if (!procPath.empty()) {
             printf("    路径:   "); setColor(CYAN); printf("%s\n", procPath.c_str()); restoreColor();
@@ -413,8 +451,9 @@ int checkSinglePort(int presetPort = -1, bool fromMenu = true) {
 
         std::string procName = ProcessManager::getProcessName(udpInfo.pid);
         std::string procPath = ProcessManager::getProcessPath(udpInfo.pid);
+        std::string tag = SpecialProcessDetector::detect(procName, port);
 
-        printf("    进程名: "); setColor(YELLOW); printf("%s\n", procName.c_str()); restoreColor();
+        printf("    进程名: "); setColor(YELLOW); printf("%s%s\n", procName.c_str(), tag.c_str()); restoreColor();
         printf("    PID:    "); setColor(YELLOW); printf("%d\n", udpInfo.pid); restoreColor();
         if (!procPath.empty()) {
             printf("    路径:   "); setColor(CYAN); printf("%s\n", procPath.c_str()); restoreColor();
@@ -423,9 +462,24 @@ int checkSinglePort(int presetPort = -1, bool fromMenu = true) {
     }
 
     // 一键释放: K 结束占用进程，回车/空格 返回菜单
-    std::vector<uint32_t> pids;
-    if (tcpOccupied) pids.push_back(tcpInfo.pid);
-    if (udpOccupied && (!tcpOccupied || udpInfo.pid != tcpInfo.pid)) pids.push_back(udpInfo.pid);
+    // 记录 PID 与涉及端口，便于写入历史记录
+    std::vector<std::pair<uint32_t, std::string>> targets;
+    if (tcpOccupied) {
+        targets.push_back(std::make_pair(tcpInfo.pid, "TCP:" + std::to_string(port)));
+    }
+    if (udpOccupied) {
+        bool merged = false;
+        for (auto& t : targets) {
+            if (t.first == udpInfo.pid) {
+                t.second += ",UDP:" + std::to_string(port);
+                merged = true;
+                break;
+            }
+        }
+        if (!merged) {
+            targets.push_back(std::make_pair(udpInfo.pid, "UDP:" + std::to_string(port)));
+        }
+    }
 
     setColor(YELLOW);
     std::cout << "  按 [K] 一键结束占用进程 (释放端口)，按 回车/空格 " << (fromMenu ? "返回菜单" : "退出") << "\n";
@@ -439,8 +493,8 @@ int checkSinglePort(int presetPort = -1, bool fromMenu = true) {
         }
         if (ch == 'k' || ch == 'K') {
             std::cout << "\n";
-            for (uint32_t pid : pids) {
-                killOneProcess(pid, ProcessManager::getProcessName(pid));
+            for (const auto& t : targets) {
+                killOneProcess(t.first, ProcessManager::getProcessName(t.first), t.second);
             }
             pauseForKey(fromMenu ? "返回菜单" : "退出");
             return 1;
@@ -1133,16 +1187,30 @@ static void printCliHelp() {
     printf("PortLens v%s - Windows 端口占用检测工具\n\n", PORTLENS_VERSION);
     printf("用法: port [选项]  （已安装到 PATH 后任意目录可用）\n\n");
     printf("  port <端口>     直接检测端口（如 port 80），显示详情，按 K 释放端口\n");
-    printf("  port <进程名>   按进程名查相关端口（如 port java），按编号/K 结束进程\n");
+    printf("  port <别名>     端口别名检测（如 port mysql，别名在 port.conf 配置）\n");
+    printf("  port <进程名> [端口] [--sort pid|port|name]\n");
+    printf("                  按进程名查相关端口（如 port java），可叠加端口过滤: port java 8080\n");
     printf("  port:<端口>     直达检测（如 port:8001，Win+R / 浏览器地址栏直接输入）\n");
     printf("  （无参数）      启动交互式菜单\n");
     printf("  -c <端口>      检测单个端口 (TCP+UDP)\n");
-    printf("  -l [协议]      列出所有监听端口 (tcp/udp/all, 默认 all)\n");
+    printf("  -l [协议] [--export csv|json[:文件]]\n");
+    printf("                  列出所有监听端口 (tcp/udp/all，默认 all)，可导出留档\n");
     printf("  -f <进程名>    按进程名反查端口 (部分匹配)\n");
-    printf("  -s <起> <止>   扫描端口范围\n");
+    printf("  -s [起 止]     扫描端口范围（省略范围时使用 port.conf 默认值）\n");
     printf("  -a <端口>      从指定端口开始自动找可用端口\n");
+    printf("  -w <端口> [--interval 毫秒] [--popup]\n");
+    printf("                  定向监控端口，占用/空闲变化时提醒，Ctrl+C 退出\n");
+    printf("  -k <端口,...>  批量释放端口，如 -k 8001,8002,8003\n");
+    printf("  --history      查看最近结束的进程记录\n");
+    printf("  --clear-history 清空历史记录\n");
+    printf("  fav [list|add <端口>|remove <端口>]\n");
+    printf("                  端口收藏夹，如 fav add 8001\n");
+    printf("  --tray [端口...] 系统托盘常驻监控（不填端口则监控收藏夹）\n");
+    printf("  --config       查看/生成配置文件\n");
     printf("  --install-path    将本程序目录加入用户 PATH (port 命令)\n");
     printf("  --uninstall-path  从用户 PATH 移除本程序目录\n");
+    printf("  --gui          强制打开图形界面（直接双击 exe 也会打开）\n");
+    printf("  --cli          强制使用命令行模式\n");
     printf("  -v, --version  显示版本\n");
     printf("  -h, --help     显示帮助\n\n");
     printf("退出码: 0=空闲/成功  1=被占用/无结果  2=参数或运行错误\n");
@@ -1186,7 +1254,8 @@ static int cliList(const std::string& protocol) {
 // 直接按进程名检测: port java → 列出进程名包含 java 的所有进程及其监听端口（按进程分组编号）。
 // 交互: K 结束全部进程（跳过系统关键进程）、数字编号结束对应进程、回车/空格退出；每次删除后刷新列表。
 // 返回 0=找到相关进程，1=无匹配
-static int checkByProcessName(const std::string& name) {
+static int checkByProcessName(const std::string& name, int portFilter = 0,
+                              const std::string& sortMode = "port") {
     std::string lowerQuery = toLowerStr(name);
 
     struct ProcEntry {
@@ -1195,6 +1264,7 @@ static int checkByProcessName(const std::string& name) {
         std::string path;
         std::string portList;
         int portCount;
+        int minPort;
     };
 
     bool firstRound = true;
@@ -1205,6 +1275,9 @@ static int checkByProcessName(const std::string& name) {
         int totalPorts = 0;
         for (const auto& p : ports) {
             if (p.pid == 0) continue;
+            // 端口过滤: port java 8080 只保留 8080
+            if (portFilter > 0 && p.port != portFilter) continue;
+
             std::string pname = ProcessManager::getProcessName(p.pid);
             if (toLowerStr(pname).find(lowerQuery) == std::string::npos) continue;
 
@@ -1216,6 +1289,7 @@ static int checkByProcessName(const std::string& name) {
             if (found) {
                 found->portList += ", " + item;
                 found->portCount++;
+                if ((int)p.port < found->minPort) found->minPort = p.port;
             } else {
                 ProcEntry e;
                 e.pid = p.pid;
@@ -1223,23 +1297,48 @@ static int checkByProcessName(const std::string& name) {
                 e.path = ProcessManager::getProcessPath(p.pid);
                 e.portList = item;
                 e.portCount = 1;
+                e.minPort = p.port;
                 entries.push_back(e);
             }
             totalPorts++;
         }
 
+        // 排序: port(默认，按最小端口) / pid / name
+        if (sortMode == "pid") {
+            std::sort(entries.begin(), entries.end(),
+                      [](const ProcEntry& a, const ProcEntry& b) { return a.pid < b.pid; });
+        } else if (sortMode == "name") {
+            std::sort(entries.begin(), entries.end(),
+                      [](const ProcEntry& a, const ProcEntry& b) {
+                          std::string an = toLowerStr(a.name);
+                          std::string bn = toLowerStr(b.name);
+                          if (an != bn) return an < bn;
+                          return a.pid < b.pid;
+                      });
+        } else {
+            std::sort(entries.begin(), entries.end(),
+                      [](const ProcEntry& a, const ProcEntry& b) {
+                          if (a.minPort != b.minPort) return a.minPort < b.minPort;
+                          return a.pid < b.pid;
+                      });
+        }
+
         if (entries.empty()) {
+            std::string scope = "进程名包含 '" + name + "'";
+            if (portFilter > 0) scope += " 且端口为 " + std::to_string(portFilter);
             if (firstRound) {
-                printInfo("没有找到进程名包含 '" + name + "' 的端口占用");
+                printInfo("没有找到" + scope + " 的端口占用");
                 return 1;
             }
-            printSuccess("进程名包含 '" + name + "' 的占用已全部结束");
+            printSuccess(scope + " 的占用已全部结束");
             pauseForKey("退出");
             return 0;
         }
         firstRound = false;
 
-        std::cout << "\n  进程名包含 \"" << name << "\" 的端口占用 (共 " << entries.size()
+        std::cout << "\n  进程名包含 \"" << name << "\"";
+        if (portFilter > 0) std::cout << " 且端口为 " << portFilter;
+        std::cout << " 的端口占用 (共 " << entries.size()
                   << " 个进程, " << totalPorts << " 个监听端口):\n\n";
         for (size_t i = 0; i < entries.size(); i++) {
             const ProcEntry& e = entries[i];
@@ -1268,7 +1367,7 @@ static int checkByProcessName(const std::string& name) {
         if (ch == 'k' || ch == 'K') {
             std::cout << "\n";
             for (const auto& e : entries) {
-                killOneProcess(e.pid, e.name);
+                killOneProcess(e.pid, e.name, e.portList);
             }
             Sleep(300);  // 等待端口释放后刷新列表
             continue;
@@ -1302,7 +1401,7 @@ static int checkByProcessName(const std::string& name) {
                 continue;
             }
             const ProcEntry& e = entries[idx - 1];
-            killOneProcess(e.pid, e.name);
+            killOneProcess(e.pid, e.name, e.portList);
             Sleep(300);
             continue;
         }
@@ -1366,6 +1465,335 @@ static bool parsePort(const char* s, uint16_t& out) {
     return true;
 }
 
+// ========== 扩展命令 ==========
+
+// 解析逗号分隔的端口列表: "8001,8002, 8003"
+static std::vector<uint16_t> parsePortList(const std::string& s) {
+    std::vector<uint16_t> result;
+    size_t start = 0;
+    while (start <= s.size()) {
+        size_t comma = s.find(',', start);
+        std::string item = (comma == std::string::npos)
+                               ? s.substr(start)
+                               : s.substr(start, comma - start);
+        start = (comma == std::string::npos) ? s.size() + 1 : comma + 1;
+
+        item.erase(std::remove_if(item.begin(), item.end(), ::isspace), item.end());
+        if (item.empty()) continue;
+
+        int v = atoi(item.c_str());
+        if (v >= 1 && v <= 65535) result.push_back((uint16_t)v);
+    }
+    return result;
+}
+
+// 批量释放端口: port -k 8001,8002,8003
+static int cliBatchKill(const std::string& portsArg) {
+    auto wanted = parsePortList(portsArg);
+    if (wanted.empty()) {
+        printError("无效的端口列表，用法: -k 8001,8002,8003");
+        return 2;
+    }
+
+    printTitle("批量释放端口");
+    auto all = PortChecker::getAllListeningPorts("ALL");
+    std::vector<uint32_t> handled;
+    int failed = 0;
+
+    for (uint16_t port : wanted) {
+        uint32_t pid = 0;
+        std::string proto;
+        for (const auto& info : all) {
+            if (info.port == port && info.pid > 0) {
+                pid = info.pid;
+                proto = info.protocol;
+                break;
+            }
+        }
+        if (pid == 0) {
+            setColor(GREEN);
+            printf("  [空闲] 端口 %d 无需处理\n", port);
+            restoreColor();
+            continue;
+        }
+        if (std::find(handled.begin(), handled.end(), pid) != handled.end()) {
+            printf("  [跳过] 端口 %d 的进程 PID %u 已处理\n", port, pid);
+            continue;
+        }
+        handled.push_back(pid);
+        if (!killOneProcess(pid, ProcessManager::getProcessName(pid),
+                            proto + ":" + std::to_string(port))) {
+            failed++;
+        }
+    }
+
+    Sleep(300);  // 等待系统回收
+
+    int still = 0;
+    for (uint16_t port : wanted) {
+        if (PortChecker::checkPort(port, "TCP").pid > 0 ||
+            PortChecker::checkPort(port, "UDP").pid > 0) {
+            still++;
+        }
+    }
+
+    printf("\n  合计 %d 个端口，仍被占用 %d 个\n", (int)wanted.size(), still);
+    return (failed == 0 && still == 0) ? 0 : 1;
+}
+
+static std::string csvEscape(const std::string& s) {
+    if (s.find_first_of(",\"\r\n") == std::string::npos) return s;
+    std::string r = "\"";
+    for (char c : s) {
+        if (c == '"') r += "\"\"";
+        else r += c;
+    }
+    r += "\"";
+    return r;
+}
+
+static std::string jsonEscape(const std::string& s) {
+    std::string r;
+    for (char c : s) {
+        switch (c) {
+            case '"': r += "\\\""; break;
+            case '\\': r += "\\\\"; break;
+            case '\n': r += "\\n"; break;
+            case '\r': r += "\\r"; break;
+            case '\t': r += "\\t"; break;
+            default:
+                if ((unsigned char)c < 0x20) {
+                    char buf[8];
+                    snprintf(buf, sizeof(buf), "\\u%04x", (unsigned char)c);
+                    r += buf;
+                } else {
+                    r += c;
+                }
+        }
+    }
+    return r;
+}
+
+// 导出端口列表为 CSV / JSON
+static int cliExportPorts(const std::vector<PortInfo>& ports, const std::string& format,
+                          const std::string& outFile) {
+    std::string fmt = toLowerStr(format);
+    if (fmt != "csv" && fmt != "json") {
+        printError("导出格式仅支持 csv / json");
+        return 2;
+    }
+
+    std::string path = outFile;
+    if (path.empty()) {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        char name[96];
+        snprintf(name, sizeof(name), "ports_%04d%02d%02d_%02d%02d%02d.%s",
+                 st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
+                 fmt == "json" ? "json" : "csv");
+        path = name;
+    }
+
+    std::string data;
+    if (fmt == "json") {
+        data = "[\n";
+        for (size_t i = 0; i < ports.size(); i++) {
+            const PortInfo& p = ports[i];
+            std::string name = p.pid > 0 ? ProcessManager::getProcessName(p.pid) : "";
+            std::string procPath = p.pid > 0 ? ProcessManager::getProcessPath(p.pid) : "";
+            data += "  {\"port\": " + std::to_string(p.port) +
+                    ", \"protocol\": \"" + jsonEscape(p.protocol) +
+                    "\", \"localAddr\": \"" + jsonEscape(p.localAddr) +
+                    "\", \"state\": \"" + jsonEscape(p.state) +
+                    "\", \"pid\": " + std::to_string(p.pid) +
+                    ", \"process\": \"" + jsonEscape(name) +
+                    "\", \"path\": \"" + jsonEscape(procPath) + "\"}";
+            if (i + 1 < ports.size()) data += ",";
+            data += "\n";
+        }
+        data += "]\n";
+    } else {
+        data = "\xEF\xBB\xBF";  // BOM: 便于 Excel 正确识别 UTF-8
+        data += "端口,协议,本地地址,状态,PID,进程名,进程路径\n";
+        for (const auto& p : ports) {
+            std::string name = p.pid > 0 ? ProcessManager::getProcessName(p.pid) : "";
+            std::string procPath = p.pid > 0 ? ProcessManager::getProcessPath(p.pid) : "";
+            data += std::to_string(p.port) + "," + csvEscape(p.protocol) + "," +
+                    csvEscape(p.localAddr) + "," + csvEscape(p.state) + "," +
+                    std::to_string(p.pid) + "," + csvEscape(name) + "," +
+                    csvEscape(procPath) + "\n";
+        }
+    }
+
+    if (!ConfigManager::writeTextFile(path, data)) {
+        printError("写入文件失败: " + path);
+        return 2;
+    }
+    printSuccess("已导出 " + std::to_string(ports.size()) + " 条记录到 " + path);
+    return 0;
+}
+
+static int cliHistory() {
+    auto records = HistoryManager::list(0);
+    printTitle("结束进程历史");
+    printf("  历史文件: %s\n", HistoryManager::getHistoryPath().c_str());
+    printf("  保留条数: %d\n\n", ConfigManager::historyLimit());
+
+    if (records.empty()) {
+        printInfo("暂无记录（结束进程后会自动记录）");
+        return 1;
+    }
+
+    printf("  %-19s %-8s %-20s %-18s %s\n", "时间", "PID", "进程", "端口", "路径");
+    for (const auto& r : records) {
+        printf("  %-19s %-8u %-20s %-18s %s\n", r.time.c_str(), r.pid,
+               r.procName.c_str(), r.ports.c_str(), r.path.c_str());
+    }
+    return 0;
+}
+
+static int cliClearHistory() {
+    if (!HistoryManager::clear()) {
+        printError("清空失败");
+        return 2;
+    }
+    printSuccess("历史记录已清空");
+    return 0;
+}
+
+static int cliFavorites(int argc, char* argv[]) {
+    std::string sub = (argc > 2) ? toLowerStr(argv[2]) : "list";
+
+    if (sub == "add") {
+        uint16_t port;
+        if (!parsePort(argc > 3 ? argv[3] : NULL, port)) {
+            printError("用法: port fav add <端口>");
+            return 2;
+        }
+        if (!FavoritesManager::add(port)) {
+            printError("保存收藏失败");
+            return 2;
+        }
+        printSuccess("已收藏端口 " + std::to_string(port));
+        return 0;
+    }
+
+    if (sub == "remove" || sub == "rm" || sub == "del") {
+        uint16_t port;
+        if (!parsePort(argc > 3 ? argv[3] : NULL, port)) {
+            printError("用法: port fav remove <端口>");
+            return 2;
+        }
+        if (!FavoritesManager::remove(port)) {
+            printError("该端口不在收藏夹中");
+            return 1;
+        }
+        printSuccess("已移除收藏端口 " + std::to_string(port));
+        return 0;
+    }
+
+    if (sub != "list" && sub != "ls") {
+        printError("用法: port fav [list | add <端口> | remove <端口>]");
+        return 2;
+    }
+
+    auto ports = FavoritesManager::list();
+    printTitle("端口收藏夹");
+    if (ports.empty()) {
+        printInfo("收藏夹为空，添加: port fav add 8001");
+        return 1;
+    }
+
+    printf("  %-8s %-8s %s\n", "端口", "状态", "详情");
+    int occupied = 0;
+    for (int port : ports) {
+        PortInfo tcp = PortChecker::checkPort((uint16_t)port, "TCP");
+        PortInfo udp = PortChecker::checkPort((uint16_t)port, "UDP");
+        bool occ = tcp.pid > 0 || udp.pid > 0;
+
+        std::string detail = getPortDesc(port);
+        if (occ) {
+            uint32_t pid = tcp.pid > 0 ? tcp.pid : udp.pid;
+            std::string name = ProcessManager::getProcessName(pid);
+            std::string tag = SpecialProcessDetector::detect(name, port);
+            detail = name + tag + " (PID: " + std::to_string(pid) + ")";
+            occupied++;
+            setColor(RED);
+        } else {
+            setColor(GREEN);
+        }
+        printf("  %-8d %-8s %s\n", port, occ ? "被占用" : "空闲", detail.c_str());
+        restoreColor();
+    }
+
+    printf("\n  共 %d 个收藏，%d 个被占用\n", (int)ports.size(), occupied);
+    return 0;
+}
+
+static int cliConfigInfo() {
+    bool created = ConfigManager::writeDefaultConfigIfMissing();
+    ConfigManager::reload();
+
+    printTitle("配置文件");
+    printf("  路径: %s\n", ConfigManager::getConfigPath().c_str());
+    if (created) {
+        printSuccess("已生成配置模板，编辑后立即生效");
+    } else {
+        printInfo("配置文件已存在");
+    }
+
+    auto aliases = ConfigManager::listAliases();
+    if (!aliases.empty()) {
+        printf("\n  端口别名 (%d 个):\n", (int)aliases.size());
+        for (const auto& a : aliases) {
+            printf("    %-14s → %d\n", a.first.c_str(), a.second);
+        }
+    }
+
+    printf("\n  默认扫描范围: %d-%d\n", ConfigManager::defaultScanStart(), ConfigManager::defaultScanEnd());
+    printf("  历史保留条数: %d\n", ConfigManager::historyLimit());
+    printf("  监控刷新间隔: %d ms\n", ConfigManager::watchIntervalMs());
+    printf("  历史文件: %s\n", HistoryManager::getHistoryPath().c_str());
+    printf("  收藏文件: %s\n", FavoritesManager::getFavoritesPath().c_str());
+    return 0;
+}
+
+static int cliWatch(int argc, char* argv[]) {
+    uint16_t port;
+    if (!parsePort(argc > 2 ? argv[2] : NULL, port)) {
+        printError("用法: -w <端口> [--interval 毫秒] [--popup]");
+        return 2;
+    }
+
+    int interval = ConfigManager::watchIntervalMs();
+    bool popup = false;
+    for (int i = 3; i < argc; i++) {
+        std::string a = argv[i];
+        if (a == "--popup") {
+            popup = true;
+        } else if (a == "--interval" && i + 1 < argc) {
+            int v = atoi(argv[++i]);
+            if (v >= 200) interval = v;
+        }
+    }
+    return runPortWatch(port, interval, popup);
+}
+
+static int cliTray(int argc, char* argv[]) {
+    std::vector<uint16_t> ports;
+    for (int i = 2; i < argc; i++) {
+        uint16_t p;
+        if (parsePort(argv[i], p)) ports.push_back(p);
+    }
+    // 未指定端口时默认监控收藏夹
+    if (ports.empty()) {
+        for (int p : FavoritesManager::list()) {
+            ports.push_back((uint16_t)p);
+        }
+    }
+    return runTray(ports, ConfigManager::watchIntervalMs());
+}
+
 static int runCli(int argc, char* argv[]) {
     std::string cmd = argv[1];
 
@@ -1415,15 +1843,47 @@ static int runCli(int argc, char* argv[]) {
 
     if (cmd == "-l") {
         std::string protocol = "ALL";
-        if (argc > 2) {
-            std::string p = argv[2];
-            if (p == "tcp" || p == "TCP") protocol = "TCP";
-            else if (p == "udp" || p == "UDP") protocol = "UDP";
-            else if (p == "all" || p == "ALL") protocol = "ALL";
+        int idx = 2;
+        if (argc > idx && argv[idx][0] != '-') {
+            std::string p = argv[idx];
+            if (p == "tcp" || p == "TCP") { protocol = "TCP"; idx++; }
+            else if (p == "udp" || p == "UDP") { protocol = "UDP"; idx++; }
+            else if (p == "all" || p == "ALL") { protocol = "ALL"; idx++; }
             else {
                 printError("无效的协议，可选: tcp / udp / all");
                 return 2;
             }
+        }
+
+        // 解析 --export <csv|json[:文件]> 或 --export=<...>
+        std::string exportFmt, exportFile;
+        for (int i = 2; i < argc; i++) {
+            std::string a = argv[i];
+            std::string val;
+            if (a == "--export") {
+                if (i + 1 >= argc) {
+                    printError("用法: --export csv|json[:文件]");
+                    return 2;
+                }
+                val = argv[++i];
+            } else if (a.rfind("--export=", 0) == 0) {
+                val = a.substr(9);
+            } else {
+                continue;
+            }
+            size_t colon = val.find(':');
+            exportFmt = (colon == std::string::npos) ? val : val.substr(0, colon);
+            if (colon != std::string::npos) exportFile = val.substr(colon + 1);
+        }
+
+        if (!exportFmt.empty()) {
+            auto ports = PortChecker::getAllListeningPorts(protocol);
+            std::sort(ports.begin(), ports.end(), [](const PortInfo& a, const PortInfo& b) {
+                if (a.port != b.port) return a.port < b.port;
+                return a.protocol < b.protocol;
+            });
+            printPortTable(ports);
+            return cliExportPorts(ports, exportFmt, exportFile);
         }
         return cliList(protocol);
     }
@@ -1438,6 +1898,12 @@ static int runCli(int argc, char* argv[]) {
 
     if (cmd == "-s") {
         uint16_t startPort, endPort;
+        if (argc <= 2) {
+            // 未指定范围时使用配置文件中的默认范围
+            startPort = (uint16_t)ConfigManager::defaultScanStart();
+            endPort = (uint16_t)ConfigManager::defaultScanEnd();
+            return cliScan(startPort, endPort);
+        }
         if (!parsePort(argc > 2 ? argv[2] : NULL, startPort) ||
             !parsePort(argc > 3 ? argv[3] : NULL, endPort)) {
             printError("无效的端口范围，用法: -s <起> <止>");
@@ -1459,6 +1925,38 @@ static int runCli(int argc, char* argv[]) {
         return cliFindAvailable(preferred);
     }
 
+    if (cmd == "-w" || cmd == "--watch") {
+        return cliWatch(argc, argv);
+    }
+
+    if (cmd == "-k" || cmd == "--kill") {
+        if (argc < 3 || !argv[2][0]) {
+            printError("缺少端口列表，用法: -k 8001,8002,8003");
+            return 2;
+        }
+        return cliBatchKill(argv[2]);
+    }
+
+    if (cmd == "--history") {
+        return cliHistory();
+    }
+
+    if (cmd == "--clear-history") {
+        return cliClearHistory();
+    }
+
+    if (cmd == "--tray") {
+        return cliTray(argc, argv);
+    }
+
+    if (cmd == "fav" || cmd == "--fav") {
+        return cliFavorites(argc, argv);
+    }
+
+    if (cmd == "config" || cmd == "--config") {
+        return cliConfigInfo();
+    }
+
     printError("未知选项: " + cmd);
     printCliHelp();
     return 2;
@@ -1466,13 +1964,24 @@ static int runCli(int argc, char* argv[]) {
 
 // ========== 主函数 ==========
 
-int main(int argc, char* argv[]) {
+static int runMain(int argc, char* argv[]) {
     // 设置 UTF-8 代码页
     SetConsoleOutputCP(65001);
     SetConsoleCP(65001);
 
     // 初始化控制台颜色
     saveColor();
+
+    // 纯命令行构建下 --cli 只是模式提示，直接忽略该参数
+    if (argc > 1) {
+        std::vector<char*> keep;
+        keep.push_back(argv[0]);
+        for (int i = 1; i < argc; i++) {
+            if (std::string(argv[i]) != "--cli") keep.push_back(argv[i]);
+        }
+        argc = (int)keep.size();
+        for (int i = 0; i < argc; i++) argv[i] = keep[i];
+    }
 
     if (!PortChecker::init()) {
         printError("Winsock 初始化失败");
@@ -1481,6 +1990,15 @@ int main(int argc, char* argv[]) {
 
     // 带参数: 命令行模式，执行完直接退出
     if (argc > 1) {
+        std::string first = argv[1];
+
+        // 子命令优先（fav / config 这类单词不能被当作进程名）
+        if (first == "fav" || first == "--fav" || first == "config" || first == "--config") {
+            int rc = runCli(argc, argv);
+            PortChecker::cleanup();
+            return rc;
+        }
+
         // 直接检测形式: port 80 / port :80 / port port:80 / port:80（URI 协议启动）
         uint16_t directPort;
         int dc = classifyDirectPort(argv[1], directPort);
@@ -1496,13 +2014,37 @@ int main(int argc, char* argv[]) {
             PortChecker::cleanup();
             return 2;
         }
-        // 进程名直达: port java → 列出相关进程及其端口，支持编号/K 删除
-        if (isProcessNameForm(argv[1])) {
+
+        // 端口别名: port mysql → 3306（配置文件 [alias] 段）
+        int aliasPort = ConfigManager::resolveAlias(first);
+        if (aliasPort > 0) {
             printHeader();
-            int rc = checkByProcessName(argv[1]);
+            printf("  端口别名: %s → %d\n", first.c_str(), aliasPort);
+            int occ = checkSinglePort((uint16_t)aliasPort, false);
+            if (!occ) pauseForKey("退出");
+            PortChecker::cleanup();
+            return occ;
+        }
+
+        // 进程名直达: port java [端口] [--sort pid|port|name]
+        if (isProcessNameForm(argv[1])) {
+            int portFilter = 0;
+            std::string sortMode = "port";
+            for (int i = 2; i < argc; i++) {
+                std::string a = argv[i];
+                if (a == "--sort" && i + 1 < argc) {
+                    sortMode = toLowerStr(argv[++i]);
+                } else if (!a.empty() && a[0] != '-') {
+                    uint16_t p;
+                    if (parsePort(a.c_str(), p)) portFilter = p;
+                }
+            }
+            printHeader();
+            int rc = checkByProcessName(argv[1], portFilter, sortMode);
             PortChecker::cleanup();
             return rc;
         }
+
         int rc = runCli(argc, argv);
         PortChecker::cleanup();
         return rc;
@@ -1548,6 +2090,12 @@ int main(int argc, char* argv[]) {
                 break;  // 超时，输入结束
             } else if ((ch == '\r' || ch == '\n') && !input.empty()) {
                 break;  // 回车确认端口输入
+            } else if (input.empty() && ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'))) {
+                // 字母快捷键: F/H/W/T
+                input += (char)tolower(ch);
+                std::cout << (char)toupper(ch);
+                std::cout.flush();
+                break;
             } else if (ch == '\b' && !input.empty()) {
                 input.pop_back();
                 std::cout << "\b \b";
@@ -1614,6 +2162,31 @@ int main(int argc, char* argv[]) {
                 PortChecker::cleanup();
                 Sleep(300);
                 return 0;
+            case 'f': {
+                char* args[] = {(char*)"port", (char*)"fav", (char*)"list", NULL};
+                cliFavorites(3, args);
+                pauseForKey();
+                break;
+            }
+            case 'h':
+                cliHistory();
+                pauseForKey();
+                break;
+            case 'w': {
+                int port = 0;
+                readInt("要监控的端口", 8001, 1, 65535, port);
+                if (port > 0) {
+                    runPortWatch((uint16_t)port, ConfigManager::watchIntervalMs(), false);
+                    pauseForKey();
+                }
+                break;
+            }
+            case 't': {
+                char* args[] = {(char*)"port", (char*)"--tray", NULL};
+                cliTray(2, args);
+                pauseForKey();
+                break;
+            }
             default:
                 // 无效输入，不做任何事，重新显示菜单
                 break;
@@ -1622,4 +2195,27 @@ int main(int argc, char* argv[]) {
 
     PortChecker::cleanup();
     return 0;
+}
+
+// ========== GUI 桥接（Rust 入口调用） ==========
+
+#ifndef PORTLENS_NO_MAIN
+// 纯 CLI 构建时保留标准 main
+int main(int argc, char* argv[]) {
+    return runMain(argc, argv);
+}
+#endif
+
+extern "C" int portlens_cli_main(int argc, char* argv[]) {
+    return runMain(argc, argv);
+}
+
+extern "C" int portlens_kill_one(unsigned int pid, const char* procName, const char* portsText) {
+    return killOneProcess(pid, procName ? procName : "", portsText ? portsText : "") ? 1 : 0;
+}
+
+extern "C" int portlens_install_path(void) {
+    bool pathOk = installToPath();
+    bool uriOk = registerPortProtocol();
+    return (pathOk || uriOk) ? 1 : 0;
 }

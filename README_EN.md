@@ -47,7 +47,7 @@ port:8001
 ```text
     +-------------------------------------------------------+
     |                                                       |
-    |    PortLens v0.6.0 - Port Occupancy Checker           |
+    |    PortLens v0.7.0 - Port Occupancy Checker           |
     |                                                       |
     +-------------------------------------------------------+
 
@@ -111,6 +111,17 @@ Notes: already-open CMD windows won't see the change — open a new one; only th
 | 7 | Find ports by process | Enter a process name (partial match) to list all ports it holds |
 | 8 | Real-time monitoring | Auto-refresh at a chosen interval; highlights and beeps on occupied/released/process-changed events |
 | 9 | Auto-find available port | Tries ports sequentially from a preferred one (e.g. 5400→5401→5402) until a free port is found |
+| 10 | Port watch | `port -w 8001`: alerts (time, process, PID, path, beep) whenever the port flips between occupied and free; `--popup` shows a desktop notification |
+| 11 | Batch release | `port -k 8001,8002,8003` frees several ports in one command, handy for CI cleanup scripts |
+| 12 | Export | `port -l --export csv` / `json` snapshots the port table; CSV ships with a UTF-8 BOM so Excel opens it correctly |
+| 13 | Config file & aliases | `port.conf` customizes the default scan range, watch interval, history size, port aliases (`port mysql` ≡ `port 3306`) and port descriptions |
+| 14 | Operation history | Records the last N terminations (time / PID / process / ports / path); review with `--history` to trace accidental kills |
+| 15 | Favorites | `port fav add 8001`, `port fav` shows the status of your everyday ports in one view |
+| 16 | Tray resident | `port --tray` minimizes to the system tray, shows balloon alerts when a port becomes occupied; right-click menu to show console / refresh / exit |
+| 17 | Docker / WSL awareness | Marks ports held by Docker containers, WSL or Hyper-V (e.g. `[Docker: redis]`) |
+| 18 | Process list filter & sort | `port java 8080` filters by process name + port; `--sort pid\|port\|name` |
+| 19 | Desktop GUI | Double-click the exe for a graphical UI: port map, port list, detection, monitor timeline, favorites, history and settings — everything the CLI does |
+| 20 | Port map | Process-centric map of "port → process → container" with live links, so you can see what holds which ports at a glance |
 
 ## Download
 
@@ -119,19 +130,45 @@ Notes: already-open CMD windows won't see the change — open a new one; only th
 
 ## Usage
 
+### Dual mode: one exe, two ways to run
+
+The same `port.exe` picks a mode based on how it was started; both modes share the same C++ core:
+
+| Launch method | Mode |
+|---------------|------|
+| Double-click the exe in Explorer | GUI |
+| Run `port` in CMD / PowerShell / Windows Terminal | CLI (interactive menu) |
+| `port 8001`, `port java`, `port -l`, ... | CLI (runs and exits) |
+| `port --gui` | Force GUI |
+| `port --cli` | Force CLI |
+
+The GUI has seven pages: **Port Map** (port → process → container links plus counters), **Port List** (sort / search / multi-select release / export CSV, JSON), **Detect** (TCP+UDP state, process detail, connections, alias shortcuts, free-port finder), **Monitor Timeline** (occupy/release events with flash and beep), **Favorites**, **History** and **Settings**. Closing the window minimizes to the system tray; the tray menu restores or exits.
+
+> The GUI needs the system WebView2 runtime (bundled with Windows 10/11). Since v0.8.1 the WebView2 loader is statically linked into the exe — a single file, no DLL required.
+
 ### Command-line mode
 
 | Option | Description |
 |--------|-------------|
 | `port <port>` | Instant check in CMD (e.g. `port 8001`) — shows process name, PID and path, with the K-key release |
 | `port <name>` | Instant batch management in CMD (e.g. `port java`): lists every process whose name matches, with its listening ports; `K` terminates all, a number terminates that one, the list refreshes after each kill |
+| `port <name> <port>` | Process name + port combined filter (e.g. `port java 8080`) |
+| `port <alias>` | Alias check (e.g. `port mysql` ≡ `port 3306`; aliases live in `port.conf`) |
 | `port :<port>` | Same as `port <port>`, colon form (e.g. `port :8001`) |
 | `port:<port>` | URI form: type `port:8001` into Win+R / the browser address bar / Start-menu search to pop a check window. CMD cannot execute this form (Windows rejects the syntax) — use `port 8001` there |
 | `-c <port>` | Check a single port (TCP+UDP) |
 | `-l [proto]` | List all listening ports (`tcp` / `udp` / `all`, default `all`) |
-| `-f <name>` | Find ports by process name (partial match, case-insensitive) |
-| `-s <start> <end>` | Scan a port range |
+| `-l --export csv\|json[:file]` | Export the port list as CSV / JSON (auto-named when no file is given) |
+| `-s [start end]` | Scan a port range (uses the defaults from `port.conf` when omitted) |
 | `-a <port>` | Auto-find an available port starting from the given one |
+| `-w <port> [--interval ms] [--popup]` | Watch a port; alerts on occupied / free transitions, Ctrl+C to stop |
+| `-k <port,...>` | Batch release, e.g. `-k 8001,8002,8003` |
+| `--history` | Show the most recent terminations (time / PID / process / ports / path) |
+| `--clear-history` | Clear the history file |
+| `fav [list\|add <port>\|remove <port>]` | Port favorites, e.g. `fav add 8001` |
+| `--tray [port...]` | Resident system-tray monitoring (falls back to favorites when no port is given) |
+| `--config` | Show config values and paths; generates a `port.conf` template when missing |
+| `-f <name>` | Find ports by process name (partial match, case-insensitive) |
 | `--install-path` | Add the program folder to the user PATH (the `port` command) |
 | `--uninstall-path` | Remove the program folder from the user PATH |
 | `-v, --version` | Show version |
@@ -157,6 +194,26 @@ port -f node
 
 :: Scan 1-1000 and save the result
 port -s 1 1000 > scan_result.txt
+
+:: Only java on 8080, sorted by PID
+port java 8080 --sort pid
+
+:: Wait for 8001 to be released (Ctrl+C to stop)
+port -w 8001
+
+:: Release several ports at once (CI cleanup)
+port -k 8001,8002,8003 > nul
+
+:: Export a port snapshot (CSV carries a BOM, Excel-ready)
+port -l --export csv:ports.csv
+port -l tcp --export json
+
+:: Pin the ports you use daily and check them in one view
+port fav add 3306
+port fav
+
+:: Stay in the tray with balloon alerts (favorites are watched by default)
+port --tray
 ```
 
 ### Interactive mode
@@ -170,8 +227,43 @@ port -s 1 1000 > scan_result.txt
 | `Enter` / `Space` | Return to the menu after a feature completes |
 | `y` / `n` | Confirm dangerous operations (e.g. kill process) |
 | `ESC` / `Q` | Stop real-time monitoring |
+| `F` | Port favorites (status of saved ports) |
+| `H` | Operation history (recent terminations) |
+| `W` | Watch a single port |
+| `T` | Resident tray monitoring |
 
 Pressing Enter at numeric prompts accepts the default shown in brackets; Backspace edits input.
+
+## Configuration file port.conf
+
+Run `port --config` to inspect the active values and paths; a template is created automatically when the file is missing. Lookup order: `port.conf` next to the exe → `%LOCALAPPDATA%\PortLens\port.conf`.
+
+```ini
+[settings]
+; Default scan range used by "port -s" without arguments
+scan_start=1
+scan_end=1024
+; Maximum number of history entries
+history_limit=50
+; Watch / tray polling interval (ms)
+watch_interval=1000
+
+[alias]
+; "port mysql" is equivalent to "port 3306"
+mysql=3306
+redis=6379
+mongo=27017
+postgres=5432
+nginx=80
+
+[desc]
+; Custom port descriptions (override built-in ones)
+8001=local test service
+```
+
+Without a config file the built-in aliases for mysql / redis / mongo / postgres / nginx are available out of the box.
+
+Favorites and history live in `%LOCALAPPDATA%\PortLens\` (`favorites.txt`, `history.tsv`).
 
 ## Requirements
 
@@ -189,12 +281,24 @@ Double-click `build.bat`. The script locates g++ on PATH, or falls back to the `
 ```bash
 windres version.rc -O coff -o version.res
 g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ \
-    main.cpp port_checker.cpp process_manager.cpp version.res \
+    main.cpp port_checker.cpp process_manager.cpp config_manager.cpp \
+    special_process.cpp watch_tray.cpp version.res \
     -o port.exe \
-    -lws2_32 -liphlpapi -lpsapi -lversion -lshell32 -mconsole
+    -lws2_32 -liphlpapi -lpsapi -lversion -lshell32 -luser32 -lgdi32 -mconsole
 ```
 
 The `-static` flags produce a single self-contained exe that runs on any Windows machine.
+
+### Graphical UI
+
+Requires a Rust toolchain (`x86_64-pc-windows-gnu`). The frontend is plain HTML/CSS/JS embedded into the exe, so no Node build step is needed:
+
+```powershell
+.\build_gui.ps1          # produces single-file dist\port.exe
+.\build_gui.ps1 -Clean   # clean and rebuild
+```
+
+The script maps a space-free drive letter with `subst` (MinGW `windres` cannot handle paths containing spaces) and collects the single-file Rust binary into `dist\` (the WebView2 loader is statically linked, no DLL needed).
 
 ## Testing
 
@@ -202,17 +306,25 @@ The `-static` flags produce a single self-contained exe that runs on any Windows
 .\tests\run_tests.ps1
 ```
 
-The smoke suite covers version output, every CLI option, the `port:` form, process-name instant lookup, PATH / protocol install/uninstall, and the exit-code contract (22 assertions). CI runs the same build and tests on every push / PR; pushing a `v*` tag automatically builds and attaches the exe to a GitHub Release.
+The smoke suite covers version output, every CLI option, the `port:` form, process-name instant lookup, PATH / protocol install/uninstall, the exit-code contract, plus the v0.7 config, favorites, export, batch release, history and tray commands (38 assertions). CI runs the same build and tests on every push / PR; pushing a `v*` tag automatically builds and attaches the exe to a GitHub Release.
 
 ## Project Layout
 
 ```
-├── main.cpp               # Entry: menu, UI, input handling, CLI mode, 9 features
+├── main.cpp               # Entry: menu, UI, input handling, CLI mode
 ├── port_checker.h/.cpp    # Port detection: TCP/UDP tables, scanning, connections
 ├── process_manager.h/.cpp # Process management: info, paths, termination
+├── config_manager.h/.cpp  # Config (port.conf), operation history, favorites
+├── special_process.h/.cpp # Docker / WSL / Hyper-V attribution
+├── watch_tray.h/.cpp      # Port watch and resident system tray
+├── gui_api.h/.cpp         # GUI bridge: exposes the core as JSON for Rust
+├── gui/                   # Desktop app (Tauri 2)
+│   ├── src/               # Frontend: index.html / styles.css / app.js
+│   └── src-tauri/         # Rust entry (mode routing, commands, tray)
+├── build_gui.ps1          # One-click GUI build (writes to dist/)
 ├── console_util.h         # Console utilities: colors, clear screen, formatting
 ├── version.rc             # Executable version resource
-├── build.bat              # One-click build script
+├── build.bat              # One-click build script (CLI edition)
 ├── tests/run_tests.ps1    # Smoke tests
 └── .github/workflows/     # CI build & release
 ```
@@ -220,6 +332,8 @@ The smoke suite covers version output, every CLI option, the `port:` form, proce
 ## Technical Notes
 
 - Built entirely on native Windows APIs: `GetExtendedTcpTable` / `GetExtendedUdpTable` (port tables), `psapi` (process info), `ShellExecuteW` (reveal file location)
+- The desktop app uses Tauri 2 (system WebView2, no Qt or Electron); the Rust entry reuses the C++ core through JSON APIs in `gui_api.cpp`, so CLI and GUI share one implementation
+- Dual-mode routing: with no arguments it inspects the parent process (`explorer.exe` means a double-click) and the console process count, then calls `FreeConsole()` to hide the console in GUI mode while keeping the console subsystem so CMD output and exit codes stay correct
 - All keyboard input goes through `_getch()` — no line-buffering artifacts, always responsive
 - UTF-8 output (code page 65001) + Win32 console color API; no third-party dependencies
 

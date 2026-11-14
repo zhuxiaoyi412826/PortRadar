@@ -2,6 +2,53 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.8.1] - 2026-11-14
+
+### 变更
+
+- `WebView2Loader` 由 DLL 分发改为**静态链接**进 `port.exe`（NuGet `WebView2LoaderStatic.lib` 转 GNU 静态存档，链接时优先于 webview2-com-sys 的 DLL 导入库），GUI 版实现真正的单文件分发，exe 不再附带任何 DLL
+- 新增 `msvc_compat.cpp`：为 MSVC 编译的静态库补齐 MinGW 缺失的运行时符号（`/GS` 安全 cookie、`magic statics` 初始化、`nothrow new/delete`），通过 objcopy 重命名为 MSVC 修饰名后整体强制链接
+- Release 资产精简为 `port.exe`（双模式）与 `port-cli.exe`（纯命令行）两个文件
+- CI 链接参数改用 `-Wl,--start-group`，兼容 MSYS2 GCC 16 的静态库依赖顺序
+
+## [0.8.0] - 2026-11-13
+
+### 新增
+
+- 桌面端 GUI（Tauri 2 + WebView2，不使用 Qt）：同一个 `port.exe` 双击即为图形界面，CMD 中执行 `port` 仍是命令行，两种模式共用同一套 C++ 内核
+- 「端口地图」可视化：以进程为中心把「端口 → 进程 → 容器环境」画成连线图，顶部统计监听端口数、进程数、容器/特殊环境数、收藏端口数
+- 页面覆盖 CLI 全部能力：端口列表（排序 / 搜索 / 勾选批量释放 / 导出 CSV、JSON）、端口检测（TCP+UDP 状态、进程详情、连接列表、别名快捷检测、查找可用端口）、监控时间轴、收藏夹、历史记录、设置
+- 「监控时间轴」：GUI 内常驻轮询指定端口，端口占用/释放时生成带时间轴样式的状态事件，配合闪烁提示与提示音，事件持久化到本地
+- 端口详情抽屉：一键查看进程内存、线程数、父进程、启动时间与全部连接，可直接收藏 / 加入监控 / 释放
+- 系统托盘：关闭窗口最小化到托盘，托盘菜单可显示主窗口或退出
+- 双模式判定：`--gui` 强制图形界面，`--cli` 强制命令行；无参数时依据父进程与所在控制台自动判定
+
+### 说明
+
+- GUI 产物需与 `WebView2Loader.dll` 放在同一目录（Windows 10/11 自带 WebView2 运行时）
+- 图形界面构建见 `build_gui.ps1`，输出到 `dist\`
+- 单文件命令行版本仍可单独编译：`build.bat`
+
+## [0.7.0] - 2026-11-13
+
+### 新增
+
+- `port -w <端口>` 定向端口监控：端口在「占用 ↔ 空闲」之间变化时打印时间、进程名、PID、路径并响铃；`--interval` 自定义轮询间隔，`--popup` 弹出桌面通知窗口，Ctrl+C 退出
+- 进程名列表支持端口过滤与排序：`port java 8080` 进程名 + 端口双重过滤，`--sort pid|port|name` 排序
+- 操作历史记录：自动记录最近 N 次结束进程操作（时间、PID、进程名、端口、路径），`--history` 查看、`--clear-history` 清空，误杀可追溯
+- 配置文件 `port.conf`：自定义默认扫描范围、轮询间隔、历史条数、端口别名（`port mysql` ≡ `port 3306`）与端口说明，`--config` 查看/生成模板；无配置文件时内置 mysql/redis/mongo/postgres/nginx 常用别名
+- 批量释放端口：`port -k 8001,8002,8003` 一条命令释放多个端口
+- 端口列表导出：`port -l --export csv[:文件]` / `json[:文件]`，CSV 带 UTF-8 BOM（Excel 直接打开不乱码）
+- Docker / WSL / Hyper-V 归属识别：端口列表与检测结果中标注 `[Docker: 容器名]`、`[WSL]`、`[Hyper-V]`
+- 端口收藏夹：`port fav add 8001` / `port fav list` / `port fav remove 8001`，一键查看收藏端口状态
+- 托盘常驻：`port --tray [端口...]` 最小化到系统托盘轮询端口，状态变化时弹出气泡提醒，右键菜单可显示控制台 / 刷新 / 退出；不填端口时默认监控收藏夹
+- 交互式菜单新增 `F`（收藏夹）、`H`（历史记录）、`W`（定向监控）、`T`（托盘监控）快捷键
+
+### 说明
+
+- 新增 `config_manager`、`special_process`、`watch_tray` 三个模块，运行时数据存于 `%LOCALAPPDATA%\PortLens\`
+- 冒烟测试扩充至 38 项断言，覆盖全部新增命令
+
 ## [0.6.0] - 2026-09-17
 
 ### 新增

@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, dev]
     tags: ['v*']
   pull_request:
     branches: [master, main]
@@ -13,6 +13,7 @@ permissions:
   contents: write
 
 jobs:
+  # ---------- 命令行单文件版 ----------
   build:
     runs-on: windows-latest
     steps:
@@ -32,22 +33,90 @@ jobs:
         run: |
           windres version.rc -O coff -o version.res
           g++ -Os -s -std=c++17 -static -static-libgcc -static-libstdc++ \
-              main.cpp port_checker.cpp process_manager.cpp version.res \
+              main.cpp port_checker.cpp process_manager.cpp config_manager.cpp \
+              special_process.cpp watch_tray.cpp version.res \
               -o port.exe \
-              -lws2_32 -liphlpapi -lpsapi -lversion -lshell32 -mconsole
+              -lws2_32 -liphlpapi -lpsapi -lversion -lshell32 -luser32 -lgdi32 -mconsole
 
       - name: Smoke test
         shell: pwsh
         run: .\tests\run_tests.ps1
 
-      - name: Upload artifact
+      - name: Pack CLI artifact
+        shell: pwsh
+        run: Copy-Item port.exe port-cli.exe
+
+      - name: Upload CLI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PortLens-win64
-          path: port.exe
+          name: PortLens-win64-cli
+          path: port-cli.exe
+
+  # ---------- 桌面端（Tauri + WebView2，同一 exe 双模式） ----------
+  gui:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MinGW-w64 (MSYS2)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          release: false
+          install: mingw-w64-x86_64-gcc
+
+      - name: Setup Rust (GNU toolchain)
+        shell: pwsh
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
+          rustup default stable-x86_64-pc-windows-gnu
+
+      - name: Build GUI
+        shell: pwsh
+        env:
+          CC: gcc
+          CXX: g++
+        run: |
+          $env:PATH = "C:\msys64\mingw64\bin;" + $env:PATH
+          # WebView2Loader 静态链接：静态存档目录优先于 DLL 导入库（路径无空格，RUSTFLAGS 安全）
+          $env:RUSTFLAGS = "-L native=$PWD\gui\src-tauri\webview2-static"
+          cargo build --release --manifest-path gui\src-tauri\Cargo.toml
+
+      - name: Smoke test (dual-mode exe)
+        shell: pwsh
+        run: |
+          Copy-Item gui\src-tauri\target\release\port.exe port.exe -Force
+          .\tests\run_tests.ps1
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item gui\src-tauri\target\release\port.exe dist\port.exe -Force
+          # WebView2Loader.dll 已内嵌进 exe（gui/src-tauri/WebView2Loader.dll），无需随包分发
+
+      - name: Upload GUI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PortLens-win64-gui
+          path: dist\port.exe
+
+  # ---------- 打标签后统一发布，两个构建都通过才创建 Release ----------
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, gui]
+    runs-on: windows-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
       - name: Upload to Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: port.exe
+          files: artifacts/**/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true

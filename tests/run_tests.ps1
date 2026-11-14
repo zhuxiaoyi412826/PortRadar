@@ -37,6 +37,12 @@ Check "--version 输出版本号" ("$out" -match "PortLens v\d+\.\d+\.\d+")
 # --help
 $out = & $exe --help
 Check "--help 输出用法" ("$out" -match "-c <端口>" -and "$out" -match "--install-path")
+Check "--help 说明双模式参数" ("$out" -match "--gui" -and "$out" -match "--cli")
+
+# 双模式：--cli 强制命令行，参数需正确透传
+$out = & $exe --cli --version
+Check "--cli 强制命令行模式" ("$out" -match "PortLens v\d+\.\d+\.\d+")
+Check "--cli 退出码为 0" ($LASTEXITCODE -eq 0)
 
 # -c 空闲/被占用均返回有效退出码
 & $exe -c 65500 | Out-Null
@@ -94,6 +100,71 @@ Check "port zqxnosuchproc 无匹配退出码为 1" ($LASTEXITCODE -eq 1)
 
 & $exe abc 2>&1 | Out-Null
 Check "port abc 无匹配退出码为 1" ($LASTEXITCODE -eq 1)
+
+# ---------- v0.7 新增功能 ----------
+$dataDir = Join-Path $env:LOCALAPPDATA 'PortLens'
+$favPath = Join-Path $dataDir 'favorites.txt'
+$histPath = Join-Path $dataDir 'history.tsv'
+$favBackup = $null
+$histBackup = $null
+if (Test-Path $favPath) { $favBackup = [System.IO.File]::ReadAllText($favPath) }
+if (Test-Path $histPath) { $histBackup = [System.IO.File]::ReadAllText($histPath) }
+
+# --config 查看/生成配置
+$out = & $exe --config
+Check "--config 退出码为 0" ($LASTEXITCODE -eq 0)
+Check "--config 显示配置路径与别名" ("$out" -match "port\.conf" -and "$out" -match "mysql")
+
+# 收藏夹
+& $exe fav remove 61201 2>&1 | Out-Null
+$out = & $exe fav add 61201
+Check "fav add 退出码为 0" ($LASTEXITCODE -eq 0)
+$out = & $exe fav list
+Check "fav list 列出收藏端口" ("$out" -match "61201" -and $LASTEXITCODE -eq 0)
+& $exe fav remove 61201 | Out-Null
+Check "fav remove 退出码为 0" ($LASTEXITCODE -eq 0)
+& $exe fav add abc 2>&1 | Out-Null
+Check "fav add 非法端口退出码为 2" ($LASTEXITCODE -eq 2)
+
+# --tray 无收藏端口时提示并退出
+if ($favBackup) { Remove-Item $favPath -Force -ErrorAction SilentlyContinue }
+& $exe --tray 2>&1 | Out-Null
+Check "--tray 无端口时退出码为 2" ($LASTEXITCODE -eq 2)
+
+# 导出 CSV / JSON
+$csvFile = Join-Path $env:TEMP 'portlens_smoke_export.csv'
+$jsonFile = Join-Path $env:TEMP 'portlens_smoke_export.json'
+Remove-Item $csvFile, $jsonFile -Force -ErrorAction SilentlyContinue
+& $exe -l tcp --export "csv:$csvFile" | Out-Null
+Check "CSV 导出退出码为 0" ($LASTEXITCODE -eq 0)
+Check "CSV 文件含 UTF-8 表头" ((Test-Path $csvFile) -and ((Get-Content $csvFile -TotalCount 1) -match "端口,协议"))
+& $exe -l --export "json:$jsonFile" | Out-Null
+Check "JSON 导出退出码为 0" ($LASTEXITCODE -eq 0)
+$jsonOk = $false
+try { $parsed = Get-Content $jsonFile -Raw | ConvertFrom-Json; $jsonOk = @($parsed).Count -gt 0 } catch { $jsonOk = $false }
+Check "JSON 导出可被解析" $jsonOk
+Remove-Item $csvFile, $jsonFile -Force -ErrorAction SilentlyContinue
+& $exe -l --export xml 2>&1 | Out-Null
+Check "未知导出格式退出码为 2" ($LASTEXITCODE -eq 2)
+
+# 批量释放参数校验
+& $exe -k abc 2>&1 | Out-Null
+Check "-k 非法参数退出码为 2" ($LASTEXITCODE -eq 2)
+& $exe -k 2>&1 | Out-Null
+Check "-k 缺参数退出码为 2" ($LASTEXITCODE -eq 2)
+
+# 历史记录
+$out = & $exe --history
+Check "--history 退出码为 0 或 1" ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 1)
+
+# 定向监控缺参数
+& $exe -w 2>&1 | Out-Null
+Check "-w 缺端口退出码为 2" ($LASTEXITCODE -eq 2)
+
+# 还原现场
+if ($null -ne $favBackup) { [System.IO.File]::WriteAllText($favPath, $favBackup) }
+else { Remove-Item $favPath -Force -ErrorAction SilentlyContinue }
+if ($null -ne $histBackup) { [System.IO.File]::WriteAllText($histPath, $histBackup) }
 
 # PATH 安装 / 卸载
 $exeDir = (Get-Item $exe).DirectoryName

@@ -7,6 +7,16 @@
 *.a
 *.res
 
+# GUI (Tauri / Rust) build outputs
+gui/src-tauri/target/
+dist/
+!gui/src-tauri/webview2-static/libWebView2Loader.dll.a
+
+# Runtime files (generated on first run)
+port.conf
+ports_*.csv
+ports_*.json
+
 # IDE / editor
 .vscode/
 .idea/
